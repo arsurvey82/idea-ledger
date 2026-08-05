@@ -1,0 +1,110 @@
+{
+  "version": 1,
+
+  "_comment": [
+    "The pipeline's description of itself. Rule placement, upstream resolution,",
+    "and provider capability negotiation all read this file. Editing it changes",
+    "what the system believes about its own shape, so it ships read-only and",
+    "operator rules are placed against it rather than into it.",
+    "",
+    "Every capability listed under 'requires' must carry a 'reason' written for",
+    "the operator: a refusal has to explain the consequence, not name a flag."
+  ],
+
+  "stages": [
+    {
+      "id": "hydrate",
+      "kind": "symbolic",
+      "summary": "Load fact base, rubric, rules and ledger state.",
+      "accepts": []
+    },
+    {
+      "id": "generate",
+      "kind": "neural",
+      "summary": "Propose candidate ideas against the brief.",
+      "requires": ["structured_output"],
+      "reason": {
+        "structured_output": "candidates must arrive in a fixed shape; free text cannot be gated"
+      },
+      "accepts": ["neural"]
+    },
+    {
+      "id": "gate",
+      "kind": "symbolic",
+      "summary": "Apply constraint predicates. Rejections name the failing rule.",
+      "accepts": ["symbolic"]
+    },
+    {
+      "id": "evidence",
+      "kind": "neural",
+      "summary": "Search for named competitors until the coverage cage is satisfied.",
+      "requires": ["structured_output", "server_search"],
+      "reason": {
+        "structured_output": "every competitor must carry a resolvable url, enforced at decode",
+        "server_search": "without search the model invents competitors instead of finding them"
+      },
+      "accepts": ["neural"]
+    },
+    {
+      "id": "refute",
+      "kind": "neural",
+      "summary": "Adversarial pass in a fresh context; defaults to refuted under doubt.",
+      "requires": ["structured_output", "server_search"],
+      "reason": {
+        "structured_output": "a verdict must be a typed object, not prose",
+        "server_search": "a refutation with no source is an opinion, not a check"
+      },
+      "accepts": ["neural"]
+    },
+    {
+      "id": "score",
+      "kind": "symbolic",
+      "summary": "Compute the vector, apply thresholds, rank within track.",
+      "accepts": ["symbolic"]
+    },
+    {
+      "id": "render",
+      "kind": "neural",
+      "summary": "Write the dossier narrative. Emits no numbers.",
+      "requires": [],
+      "reason": {},
+      "accepts": ["neural"]
+    },
+    {
+      "id": "compile_rule",
+      "kind": "neural",
+      "summary": "Parse an operator's plain-language rule into a typed object.",
+      "requires": ["structured_output"],
+      "reason": {
+        "structured_output": "a rule must compile to a typed object, never to prose"
+      },
+      "accepts": []
+    }
+  ],
+
+  "fact_fields": [
+    "budget_floor_usd",
+    "budget_ceiling_usd",
+    "income_target_usd",
+    "hours_per_week",
+    "location",
+    "languages",
+    "licences_held",
+    "will_cold_call",
+    "will_meet_in_person",
+    "accepts_live_negotiation",
+    "time_to_first_revenue_days"
+  ],
+
+  "idea_fields": [
+    "capital_required_usd",
+    "requires_licence",
+    "requires_live_negotiation",
+    "requires_in_person",
+    "delivery_mode",
+    "recurring_revenue",
+    "moat_kind",
+    "track",
+    "status"
+  ]
+}

@@ -1,0 +1,18 @@
+[project]
+name = "idea-ledger"
+version = "0.1.0"
+description = "A decision ledger with a language model attached to it."
+requires-python = ">=3.11"
+dependencies = []          # the core runs on the standard library alone
+
+[project.optional-dependencies]
+anthropic  = ["anthropic>=0.60"]
+openai     = ["openai>=1.40"]     # also covers OpenRouter, which is API-compatible
+all        = ["anthropic>=0.60", "openai>=1.40"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]

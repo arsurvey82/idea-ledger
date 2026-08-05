@@ -1,0 +1,172 @@
+{
+  "_comment": [
+    "Output contracts for the four model call sites, enforced at decode rather",
+    "than requested in prose. The prior system's system prompt said 'You MUST",
+    "strictly follow the JSON schema' and got zero compliance across ninety",
+    "generated ideas, because a request is not an enforcement mechanism.",
+    "",
+    "Every schema sets additionalProperties false and lists required fields, so",
+    "a provider's strict mode can validate against it.",
+    "",
+    "Note the shape of 'judge': the model returns per-dimension judgements with",
+    "evidence, confidence and a falsifier. It never returns a total. Totals are",
+    "computed in app/core/scoring.py."
+  ],
+
+  "propose": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["candidates"],
+    "properties": {
+      "candidates": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "name", "track", "rationale", "fields"],
+          "properties": {
+            "id": { "type": "string" },
+            "name": { "type": "string" },
+            "track": { "type": "string" },
+            "rationale": { "type": "string" },
+            "fields": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "capital_required_usd",
+                "requires_live_negotiation",
+                "requires_in_person",
+                "requires_licence",
+                "recurring_revenue",
+                "moat_kind"
+              ],
+              "properties": {
+                "capital_required_usd": { "type": "integer" },
+                "requires_live_negotiation": { "type": "boolean" },
+                "requires_in_person": { "type": "boolean" },
+                "requires_licence": { "type": "boolean" },
+                "recurring_revenue": { "type": "boolean" },
+                "moat_kind": {
+                  "type": "string",
+                  "enum": [
+                    "licence",
+                    "physical_supply",
+                    "logistics",
+                    "proprietary_access",
+                    "brand",
+                    "execution_speed",
+                    "none"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "gather": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["competitors", "exhausted"],
+    "properties": {
+      "exhausted": {
+        "type": "boolean",
+        "description": "true when further searching would not find more named competitors"
+      },
+      "competitors": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "url", "positioning", "verbatim"],
+          "properties": {
+            "name": { "type": "string" },
+            "url": {
+              "type": "string",
+              "description": "the page this was read from; a claim without one is discarded"
+            },
+            "positioning": { "type": "string" },
+            "verbatim": {
+              "type": "string",
+              "description": "a short quoted span from the page supporting the claim"
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "judge": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["dimensions"],
+    "properties": {
+      "dimensions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dimension", "value", "confidence", "falsifier", "evidence_ids"],
+          "properties": {
+            "dimension": { "type": "string" },
+            "value": { "type": "integer", "enum": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] },
+            "confidence": { "type": "number" },
+            "falsifier": {
+              "type": "string",
+              "description": "what would have to be true for this value to move"
+            },
+            "evidence_ids": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    }
+  },
+
+  "refute": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["refuted", "basis", "evidence_ids"],
+    "properties": {
+      "refuted": { "type": "boolean" },
+      "basis": { "type": "string" },
+      "evidence_ids": { "type": "array", "items": { "type": "string" } }
+    }
+  },
+
+  "compile_rule": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["target", "description", "inputs", "change_class", "reasoning"],
+    "properties": {
+      "target": { "type": "string", "enum": ["symbolic", "neural", "ambiguous"] },
+      "description": { "type": "string" },
+      "reasoning": {
+        "type": "string",
+        "description": "why this target; shown to the operator, who may force the other"
+      },
+      "inputs": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "fact-base or idea fields the rule reads"
+      },
+      "change_class": {
+        "type": "string",
+        "enum": ["additive", "breaking", "silent_breaking"]
+      },
+      "predicate": {
+        "type": "string",
+        "description": "JSON predicate tree, when target is symbolic"
+      },
+      "fragment": {
+        "type": "string",
+        "description": "prompt fragment, when target is neural"
+      },
+      "ambiguity": {
+        "type": "string",
+        "description": "when target is ambiguous, the specific question the operator must answer"
+      }
+    }
+  }
+}

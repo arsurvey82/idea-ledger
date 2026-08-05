@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Idea Ledger</title>
+<style>
+:root{
+  --bg:#0E1316; --bg-2:#141B1F; --glass:rgba(255,255,255,.045); --glass-line:rgba(255,255,255,.10);
+  --scrim:#141B1F; --ink:#DFE5E3; --dim:#8A9499; --rule:#232C31;
+  --oxide:#D4634E;
+  --ok:#5FA98C; --warn:#D9A441; --stop:#C4574A; --hold:#7E8FA8; --info:#5E93A8;
+  --mono:ui-monospace,"Cascadia Mono","SF Mono",Menlo,Consolas,monospace;
+  --sans:Optima,Candara,"Gill Sans MT","Segoe UI",system-ui,sans-serif;
+}
+:root[data-theme="light"]{
+  --bg:#E9EAE5; --bg-2:#F3F4F0; --glass:rgba(255,255,255,.55); --glass-line:rgba(20,25,27,.10);
+  --scrim:#F3F4F0; --ink:#14191B; --dim:#5F686C; --rule:#CDCFC8;
+  --oxide:#A63D2C;
+  --ok:#3F7A5E; --warn:#96702A; --stop:#A6392E; --hold:#4F6076; --info:#3A6B7E;
+}
+*{box-sizing:border-box}
+body{margin:0;height:100vh;overflow:hidden;background:var(--bg);color:var(--ink);
+  font-family:var(--sans);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+button,input,textarea,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--oxide);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* three panes */
+.shell{display:grid;grid-template-columns:190px minmax(0,1fr) 430px;height:100vh}
+@media (max-width:1100px){.shell{grid-template-columns:64px minmax(0,1fr) 380px}.rail b{display:none}}
+@media (max-width:820px){.shell{grid-template-columns:minmax(0,1fr)}.rail,.side{display:none}}
+
+/* rail */
+.rail{border-right:1px solid var(--rule);padding:20px 14px;display:flex;flex-direction:column;gap:4px;background:var(--bg-2)}
+.brand{font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--oxide);margin-bottom:18px}
+.rail button{display:flex;gap:10px;align-items:center;width:100%;background:none;border:0;
+  padding:8px 10px;border-radius:3px;cursor:pointer;text-align:left;color:var(--dim);font-size:14px}
+.rail button:hover{background:var(--glass);color:var(--ink)}
+.rail button[aria-current="true"]{color:var(--ink);background:var(--glass);box-shadow:inset 2px 0 0 var(--oxide)}
+.rail .spacer{flex:1}
+.rail .foot{font-family:var(--mono);font-size:10px;color:var(--dim);letter-spacing:.08em}
+
+/* workspace */
+main{overflow-y:auto;padding:26px 30px}
+h1{font-family:var(--mono);font-size:12px;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--oxide);font-weight:600;margin:0 0 4px}
+h2{font-size:24px;font-weight:600;margin:0 0 18px;letter-spacing:-.01em}
+h3{font-family:var(--mono);font-size:11px;letter-spacing:.15em;text-transform:uppercase;
+  color:var(--dim);margin:26px 0 10px;font-weight:600}
+.hide{display:none!important}
+
+.card{background:var(--glass);border:1px solid var(--glass-line);border-radius:6px;
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);padding:16px 18px;margin-bottom:16px}
+/* text sits on an opaque scrim so contrast is computed against a known value,
+   never against whatever happens to be behind the glass */
+.card .body{background:var(--scrim);border-radius:4px;padding:12px 14px}
+
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--dim);text-align:left;padding:0 12px 8px 0;border-bottom:1px solid var(--rule);font-weight:600}
+td{padding:9px 12px 9px 0;border-bottom:1px solid var(--rule);vertical-align:middle}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:var(--glass)}
+tbody tr[aria-selected="true"]{box-shadow:inset 2px 0 0 var(--oxide)}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+.pill{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.1em;
+  text-transform:uppercase;padding:2px 7px;border-radius:2px;border:1px solid currentColor}
+.s-active{color:var(--ok)} .s-blocked{color:var(--warn)} .s-rejected{color:var(--stop)}
+.s-on_hold{color:var(--hold)} .s-under_researched{color:var(--oxide);border-style:dashed}
+.p-overridden{color:var(--info);border-style:dashed}
+.p-seeded{color:var(--dim)} .p-derived{color:var(--dim);border-color:transparent;opacity:.6}
+
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.chip{background:none;border:1px solid var(--rule);color:var(--dim);border-radius:99px;
+  padding:3px 12px;font-size:12px;cursor:pointer}
+.chip[aria-pressed="true"]{border-color:var(--oxide);color:var(--oxide)}
+
+.btn{background:var(--glass);border:1px solid var(--glass-line);color:var(--ink);
+  padding:8px 14px;border-radius:4px;cursor:pointer;font-size:13px}
+.btn:hover{border-color:var(--oxide)}
+.btn.primary{border-color:var(--oxide);color:var(--oxide)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+input[type=text],textarea{width:100%;background:var(--bg);border:1px solid var(--rule);
+  border-radius:4px;padding:9px 11px;font-size:14px}
+textarea{min-height:74px;resize:vertical;font-family:var(--sans)}
+pre{font-family:var(--mono);font-size:12px;line-height:1.6;white-space:pre-wrap;margin:0;color:var(--ink)}
+.muted{color:var(--dim);font-size:13px}
+
+/* live stream */
+.stream{font-family:var(--mono);font-size:11.5px;max-height:190px;overflow-y:auto}
+.stream div{padding:2px 0;color:var(--dim)}
+.stream b{color:var(--ink);font-weight:600}
+.stream .rejected,.stream .exhausted{color:var(--stop)}
+.stream .passed{color:var(--ok)}
+
+/* output panel */
+.side{border-left:1px solid var(--rule);background:var(--bg-2);display:flex;flex-direction:column;overflow:hidden}
+.side header{padding:18px 20px 0}
+.side .scroll{flex:1;overflow-y:auto;padding:0 20px 18px}
+.side footer{border-top:1px solid var(--rule);padding:12px 20px;display:flex;gap:8px;flex-wrap:wrap}
+.dim-row{display:grid;grid-template-columns:1fr 34px;gap:8px;align-items:baseline;
+  padding:9px 0;border-bottom:1px solid var(--rule)}
+.dim-row .name{font-size:14px}
+.dim-row .val{font-family:var(--mono);text-align:right;font-variant-numeric:tabular-nums}
+.dim-row .fals{grid-column:1/-1;color:var(--dim);font-size:12.5px;margin-top:2px}
+.bar{height:3px;background:var(--rule);border-radius:2px;overflow:hidden;grid-column:1/-1;margin-top:4px}
+.bar i{display:block;height:100%;background:var(--oxide)}
+.total{font-family:var(--mono);font-size:30px;font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <nav class="rail">
+    <div class="brand">Idea Ledger</div>
+    <button data-view="ideas" aria-current="true">&#9636; <b>Ideas</b></button>
+    <button data-view="rules">&#9635; <b>Rules</b></button>
+    <button data-view="facts">&#9633; <b>Facts</b></button>
+    <button data-view="setup">&#9881; <b>Setup</b></button>
+    <button data-view="help">? <b>Help</b></button>
+    <div class="spacer"></div>
+    <button id="theme" class="foot">theme</button>
+    <div class="foot" id="conn">connecting</div>
+  </nav>
+
+  <main>
+    <!-- IDEAS -->
+    <section id="v-ideas">
+      <h1>Ledger</h1><h2>Ideas</h2>
+      <div class="chips" id="filters"></div>
+      <div class="card"><div class="body">
+        <table><thead><tr>
+          <th>Idea</th><th>Track</th><th>Status</th><th>Score</th><th>Prov.</th>
+        </tr></thead><tbody id="ideas"></tbody></table>
+        <p class="muted" id="empty">No ideas yet. Run the demo below to see the pipeline work.</p>
+      </div></div>
+
+      <h3>Run</h3>
+      <div class="card"><div class="body">
+        <div class="row">
+          <input type="text" id="brief" value="energy compliance services" style="flex:1;min-width:200px">
+          <button class="btn primary" id="run">Run</button>
+        </div>
+        <p class="muted" style="margin:10px 0 0">
+          With no key configured this runs a labelled demo evaluator &mdash; no model
+          is called and every result is fictional.
+        </p>
+      </div></div>
+
+      <h3>Live stages</h3>
+      <div class="card"><div class="body stream" id="stream">
+        <div>waiting&hellip;</div>
+      </div></div>
+
+      <h3>Rejections</h3>
+      <div class="card"><div class="body"><pre id="rejections">none yet</pre></div></div>
+    </section>
+
+    <!-- RULES -->
+    <section id="v-rules" class="hide">
+      <h1>Orchestration</h1><h2>Rules</h2>
+      <div class="card"><div class="body">
+        <p class="muted" style="margin-top:0">
+          Describe a rule in plain language. It is triaged to a predicate or a prompt
+          fragment, placed against the manifest, and dry-run before anything changes.
+        </p>
+        <textarea id="ruleText" placeholder="e.g. reject anything needing more than 20,000 dollars of capital"></textarea>
+        <div class="row" style="margin-top:10px">
+          <select id="ruleTarget">
+            <option value="symbolic">symbolic &mdash; decidable from fields</option>
+            <option value="neural">neural &mdash; needs judgement</option>
+          </select>
+          <input type="text" id="ruleField" placeholder="field, e.g. capital_required_usd" style="flex:1;min-width:180px">
+          <select id="ruleOp">
+            <option>lte</option><option>gte</option><option>lt</option><option>gt</option>
+            <option>eq</option><option>ne</option><option>falsy</option><option>truthy</option>
+          </select>
+          <input type="text" id="ruleValue" placeholder="value" style="width:110px">
+          <button class="btn" id="previewRule">Preview</button>
+        </div>
+        <p class="muted" style="margin-bottom:0">
+          The structured inputs stand in for the model compile step, which lands with a
+          configured provider. Triage, placement, dry-run and confirmation are already live.
+        </p>
+      </div></div>
+      <div class="card hide" id="previewCard"><div class="body">
+        <pre id="previewOut"></pre>
+        <div class="row" style="margin-top:12px">
+          <button class="btn primary" id="activateRule">Activate</button>
+          <label class="muted"><input type="checkbox" id="breakingOk"> confirm breaking change</label>
+        </div>
+      </div></div>
+      <h3>Active rules</h3>
+      <div class="card"><div class="body"><pre id="rules">none</pre></div></div>
+    </section>
+
+    <!-- FACTS -->
+    <section id="v-facts" class="hide">
+      <h1>Operator</h1><h2>Facts</h2>
+      <div class="card"><div class="body"><pre id="facts"></pre></div></div>
+      <h3>Load-bearing assumptions</h3>
+      <div class="card"><div class="body"><pre id="assumptions"></pre></div></div>
+      <h3>Calibration</h3>
+      <div class="card"><div class="body"><pre id="calibration"></pre></div></div>
+    </section>
+
+    <!-- SETUP -->
+    <section id="v-setup" class="hide">
+      <h1>Configuration</h1><h2>Setup</h2>
+      <div class="card"><div class="body"><pre id="setup"></pre></div></div>
+      <h3>Provider capabilities</h3>
+      <div class="card"><div class="body"><pre id="negotiation"></pre></div></div>
+      <h3>Pipeline manifest</h3>
+      <div class="card"><div class="body"><pre id="manifest"></pre></div></div>
+    </section>
+
+    <!-- HELP -->
+    <section id="v-help" class="hide">
+      <h1>Reference</h1><h2>Help</h2>
+      <div class="card"><div class="body">
+        <h3 style="margin-top:0">What this is</h3>
+        <p>A ledger that keeps scores honest as facts change. It proposes ideas, but its
+        real job is revision.</p>
+        <h3>Provenance</h3>
+        <p>Every number is <b>derived</b> (computed from evidence), <b>overridden</b>
+        (you edited it; the original is kept), or <b>seeded</b> (imported, no evidence).
+        Overrides are excluded from calibration &mdash; counting your corrections as model
+        error would make the system measure you instead of it.</p>
+        <h3>Tracks</h3>
+        <p>Scores rank within a track only. A physical-goods idea and a service idea are
+        not on one scale, so the system refuses to sort them together.</p>
+        <h3>Under-researched</h3>
+        <p>Not a low score &mdash; a terminal state. If too few citable competitors were
+        found, the idea is not scored at all rather than scored on thin evidence.</p>
+        <h3>Breaking changes</h3>
+        <p>Adding, removing or redefining a dimension means every stored score stops
+        being comparable to every future one, and the missing evidence cannot honestly
+        be backfilled. The ledger versions rather than pretends.</p>
+        <h3>Your data</h3>
+        <p>Facts, ideas and evidence live outside this repository and are never
+        committed. The framework ships; your profile does not.</p>
+      </div></div>
+    </section>
+  </main>
+
+  <!-- OUTPUT PANEL -->
+  <aside class="side">
+    <header>
+      <h1>Output</h1>
+      <h2 id="dName" style="font-size:19px;margin-bottom:6px">Nothing selected</h2>
+      <div class="row" style="gap:6px;margin-bottom:10px">
+        <span class="pill" id="dStatus" hidden></span>
+        <span class="pill p-overridden" id="dOver" hidden>contains override</span>
+      </div>
+      <div class="total" id="dTotal"></div>
+    </header>
+    <div class="scroll">
+      <div id="dDims"></div>
+      <p class="muted" id="dHint">Select an idea to see its dimensions, evidence and falsifiers.</p>
+    </div>
+    <footer>
+      <button class="btn" id="export" disabled>Export</button>
+      <button class="btn" id="archive" disabled>Archive</button>
+      <button class="btn" id="editScore" disabled>Edit</button>
+    </footer>
+  </aside>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const api = async (p, body) => (await fetch(p, body ? {
+  method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+} : {})).json();
+
+let STATE = {ideas:[]}, SELECTED = null, FILTER = 'all', PENDING = null;
+
+/* views */
+document.querySelectorAll('.rail button[data-view]').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.rail button[data-view]').forEach(x => x.setAttribute('aria-current', x === b));
+  document.querySelectorAll('main section').forEach(s => s.classList.add('hide'));
+  $('#v-' + b.dataset.view).classList.remove('hide');
+});
+
+/* theme — the toggle must win over the OS preference in both directions */
+$('#theme').onclick = () => {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem('theme', next);
+};
+document.documentElement.dataset.theme =
+  localStorage.getItem('theme') ||
+  (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+
+/* rendering */
+function renderIdeas() {
+  const rows = STATE.ideas.filter(i => FILTER === 'all' || i.status === FILTER);
+  $('#empty').style.display = STATE.ideas.length ? 'none' : 'block';
+  $('#ideas').innerHTML = rows.map(i => `
+    <tr data-id="${i.id}" aria-selected="${SELECTED === i.id}">
+      <td>${esc(i.name)}</td>
+      <td class="muted">${esc(i.track)}</td>
+      <td><span class="pill s-${i.status}">${i.status.replace(/_/g,' ')}</span></td>
+      <td class="num">${i.total == null ? '&mdash;' : i.total + '/' + i.max}</td>
+      <td>${i.overridden ? '<span class="pill p-overridden">edited</span>' : ''}</td>
+    </tr>`).join('');
+  $('#ideas').querySelectorAll('tr').forEach(tr => tr.onclick = () => select(tr.dataset.id));
+
+  const counts = {all: STATE.ideas.length};
+  STATE.ideas.forEach(i => counts[i.status] = (counts[i.status] || 0) + 1);
+  $('#filters').innerHTML = Object.entries(counts).map(([k, n]) =>
+    `<button class="chip" data-f="${k}" aria-pressed="${FILTER === k}">${k.replace(/_/g,' ')} ${n}</button>`
+  ).join('');
+  $('#filters').querySelectorAll('.chip').forEach(c => c.onclick = () => {
+    FILTER = c.dataset.f; renderIdeas();
+  });
+}
+
+async function select(id) {
+  SELECTED = id; renderIdeas();
+  const d = await api('/api/idea?id=' + encodeURIComponent(id));
+  $('#dName').textContent = d.name || id;
+  $('#dHint').style.display = 'none';
+  const st = $('#dStatus'); st.hidden = false;
+  st.textContent = (d.status || '').replace(/_/g,' '); st.className = 'pill s-' + d.status;
+  $('#dTotal').innerHTML = d.total == null ? '<span class="muted" style="font-size:14px">not scored</span>'
+    : d.total + '<span class="muted" style="font-size:15px">/' + d.max + '</span>';
+  $('#dOver').hidden = !(d.dimensions || []).some(x => x.provenance === 'overridden');
+  $('#dDims').innerHTML = (d.dimensions || []).map(x => `
+    <div class="dim-row">
+      <div class="name">${esc(x.dimension)}
+        ${x.provenance !== 'derived' ? `<span class="pill p-${x.provenance}">${x.provenance}</span>` : ''}
+        ${x.original != null ? `<span class="muted"> was ${x.original}</span>` : ''}
+      </div>
+      <div class="val">${x.value}</div>
+      <div class="bar"><i style="width:${x.value * 10}%"></i></div>
+      <div class="fals">${esc(x.falsifier || 'no falsifier recorded')}
+        <span class="muted">&middot; confidence ${x.confidence} &middot; ${x.evidence.length} source(s)</span></div>
+    </div>`).join('');
+  ['export','archive','editScore'].forEach(b => $('#' + b).disabled = false);
+}
+
+function renderAll() {
+  renderIdeas();
+  $('#facts').textContent = JSON.stringify(STATE.facts, null, 2);
+  $('#assumptions').textContent = STATE.assumptions;
+  $('#calibration').textContent = STATE.calibration;
+  $('#manifest').textContent = STATE.manifest;
+  $('#rules').textContent = STATE.rules.length
+    ? STATE.rules.map(r => `${r.active ? '[on ]' : '[off]'} ${r.id}  ${r.stage}/${r.target}  ${r.description}`).join('\n')
+    : 'none';
+  $('#rejections').textContent = STATE.rejections.length
+    ? STATE.rejections.map(r => `${r.idea_id}  ${r.outcome}\n    ${r.cause}`).join('\n')
+    : 'none yet';
+}
+
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const refresh = async () => { STATE = await api('/api/state'); renderAll(); };
+
+/* actions */
+$('#run').onclick = async () => {
+  $('#run').disabled = true; $('#stream').innerHTML = '';
+  try { await api('/api/run', {brief: $('#brief').value}); await refresh(); }
+  finally { $('#run').disabled = false; }
+};
+
+$('#previewRule').onclick = async () => {
+  const target = $('#ruleTarget').value;
+  const field = $('#ruleField').value.trim(), op = $('#ruleOp').value;
+  const raw = $('#ruleText').value.trim() || 'operator rule';
+  const body = {raw, target, description: raw, reasoning: 'entered directly by the operator',
+                change_class: 'additive'};
+  if (target === 'symbolic') {
+    const v = $('#ruleValue').value;
+    const leaf = {field, op};
+    if (!['falsy','truthy','exists','missing'].includes(op)) leaf.value = isNaN(+v) ? v : +v;
+    body.predicate = JSON.stringify(leaf); body.inputs = [field];
+  } else { body.fragment = raw; }
+  const out = await api('/api/rule/preview', body);
+  $('#previewCard').classList.remove('hide');
+  $('#previewOut').textContent = out.error || out.report;
+  $('#breakingOk').parentElement.style.display = out.breaking ? '' : 'none';
+  PENDING = out.rule_id; $('#activateRule').disabled = !!out.error;
+};
+
+$('#activateRule').onclick = async () => {
+  const out = await api('/api/rule/activate',
+    {rule_id: PENDING, confirmed: true, breaking_confirmed: $('#breakingOk').checked});
+  $('#previewOut').textContent = out.error || `activated ${out.activated} at ${out.stage}`;
+  await refresh();
+};
+
+$('#archive').onclick = async () => {
+  const out = await api('/api/archive', {idea: SELECTED});
+  alert(out.error || 'Archived to\n' + out.archived);
+};
+$('#export').onclick = () => window.open('/api/idea?id=' + encodeURIComponent(SELECTED));
+$('#editScore').onclick = async () => {
+  const dim = prompt('Which dimension?'); if (!dim) return;
+  const val = prompt('New value 1-10?'); if (!val) return;
+  const why = prompt('Reason (recorded with the override)?'); if (!why) return;
+  const out = await api('/api/override', {idea: SELECTED, dimension: dim, value: +val, reason: why});
+  if (out.error) alert(out.error); else { await refresh(); await select(SELECTED); }
+};
+
+/* live stages */
+const es = new EventSource('/api/events');
+es.onopen = () => $('#conn').textContent = 'live';
+es.onerror = () => $('#conn').textContent = 'reconnecting';
+es.onmessage = e => {
+  const m = JSON.parse(e.data);
+  if (m.type === 'run_complete') { $('#conn').textContent = 'live'; return; }
+  const row = document.createElement('div');
+  row.className = m.state;
+  row.innerHTML = `<b>${esc(m.candidate)}</b> ${esc(m.stage)} &middot; ${esc(m.state)} ${esc(m.detail || '')}`;
+  $('#stream').appendChild(row);
+  $('#stream').scrollTop = $('#stream').scrollHeight;
+};
+
+/* boot */
+(async () => {
+  await refresh();
+  const s = await api('/api/setup');
+  $('#setup').textContent = s.config + '\n\nledger: ' + s.home;
+  $('#negotiation').textContent = s.negotiation;
+})();
+</script>
+</body>
+</html>
