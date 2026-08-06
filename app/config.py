@@ -29,6 +29,7 @@ CONFIG_FILE = "config.json"
 #: existing shell environment usually just works.
 DEFAULT_ENV_VARS: Mapping[str, str] = {
     "anthropic": "ANTHROPIC_API_KEY",
+    "google": "GEMINI_API_KEY",
     "openai": "OPENAI_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
 }
@@ -41,6 +42,7 @@ DEFAULT_ENV_VARS: Mapping[str, str] = {
 #: rather than at the paste. Refusing at the door names the real problem.
 KEY_PREFIXES: Mapping[str, str] = {
     "anthropic": "sk-ant-",
+    "google": "AIza",
     "openai": "sk-",
     "openrouter": "sk-or-",
 }

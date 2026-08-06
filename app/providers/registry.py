@@ -104,8 +104,39 @@ OPENROUTER = _Declared(
 )
 
 
+#: Google AI Studio, reached through its OpenAI-compatible surface at
+#: generativelanguage.googleapis.com/v1beta/openai. It is listed separately from
+#: OpenRouter because Google's own free tier is the only genuinely free way to
+#: run the schema-bound stages: OpenRouter carries 21 Gemini routes and not one
+#: of them is free.
+#:
+#: SERVER_SEARCH is deliberately absent. Gemini has search grounding, but this
+#: build has not verified that it survives the OpenAI-compatible shim, and
+#: claiming an unverified capability is the exact failure that let a route with
+#: no structured output report itself ready to generate.
+GOOGLE = _Declared(
+    name="google",
+    _caps=frozenset(
+        {
+            Capability.STRUCTURED_OUTPUT,
+            Capability.STRICT_TOOLS,
+            Capability.THINKING,
+        }
+    ),
+    _model=ModelSpec(
+        provider="google",
+        model_id="gemini-2.5-flash",
+        context_tokens=1_000_000,
+        input_cost_per_mtok=0.0,   # free tier; paid pricing varies by model
+        output_cost_per_mtok=0.0,
+    ),
+    _note="search grounding is not exposed through the OpenAI-compatible surface here",
+)
+
+
 REGISTRY: Mapping[str, _Declared] = {
     "anthropic": ANTHROPIC,
+    "google": GOOGLE,
     "openai": OPENAI,
     "openrouter": OPENROUTER,
 }

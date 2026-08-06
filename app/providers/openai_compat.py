@@ -19,11 +19,17 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
+#: Google AI Studio speaks the same dialect at its compatibility endpoint, so
+#: one client covers three providers rather than two.
+GOOGLE_BASE = "https://generativelanguage.googleapis.com/v1beta/openai"
+
 ENDPOINTS: Mapping[str, str] = {
+    "google": f"{GOOGLE_BASE}/chat/completions",
     "openai": "https://api.openai.com/v1/chat/completions",
     "openrouter": "https://openrouter.ai/api/v1/chat/completions",
 }
 MODEL_LISTS: Mapping[str, str] = {
+    "google": f"{GOOGLE_BASE}/models",
     "openai": "https://api.openai.com/v1/models",
     "openrouter": "https://openrouter.ai/api/v1/models",
 }

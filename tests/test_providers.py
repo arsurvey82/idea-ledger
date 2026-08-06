@@ -158,3 +158,50 @@ class RouteSelection(unittest.TestCase):
         free = lambda m: m.endswith(":free") or m == "openrouter/free"
         order = sorted(caps, key=lambda m: (not free(m), caps[m], m.endswith("/free"), m))
         self.assertEqual(["good/chat:free", "good/cheap", "good/dear", "meta/auto"], order)
+
+
+class GoogleProvider(unittest.TestCase):
+    """Gemini reached through Google's OpenAI-compatible surface.
+
+    Worth its own coverage because it is the only provider here with a genuinely
+    free tier for schema-bound work: OpenRouter carries 21 Gemini routes and not
+    one of them is free.
+    """
+
+    def test_it_is_registered_and_speaks_the_compatible_dialect(self) -> None:
+        from app.providers import REGISTRY
+        from app.providers.openai_compat import ENDPOINTS, MODEL_LISTS
+
+        self.assertIn("google", REGISTRY)
+        self.assertIn("generativelanguage.googleapis.com", ENDPOINTS["google"])
+        self.assertIn("generativelanguage.googleapis.com", MODEL_LISTS["google"])
+
+    def test_it_does_not_claim_search_it_has_not_verified(self) -> None:
+        """Gemini has grounding; this build has not confirmed it survives the shim.
+
+        Claiming it would put the evidence stage back in the position that broke
+        the generate stage: reported ready, then failing on real data.
+        """
+        from app.providers import REGISTRY
+        from app.providers.base import Capability
+
+        caps = REGISTRY["google"].capabilities()
+        self.assertIn(Capability.STRUCTURED_OUTPUT, caps)
+        self.assertIn(Capability.STRICT_TOOLS, caps)
+        self.assertNotIn(Capability.SERVER_SEARCH, caps)
+
+    def test_google_keys_are_recognised_and_mismatches_are_named(self) -> None:
+        from app.config import validate_key
+
+        key, complaint = validate_key("google", "AIza" + "x" * 35)
+        self.assertEqual("", complaint)
+        self.assertTrue(key)
+
+        _, complaint = validate_key("openrouter", "AIza" + "x" * 35)
+        self.assertIn("google", complaint)
+
+    def test_a_google_config_resolves_its_own_env_var(self) -> None:
+        from app.config import Config
+
+        cfg = Config().with_provider("google")
+        self.assertEqual("GEMINI_API_KEY", cfg.key_ref.env_var)

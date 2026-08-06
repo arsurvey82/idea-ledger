@@ -38,7 +38,7 @@ from .rule_intake import ImpactPreview, RuleIntake, RuleProposal
 from .store import Store
 
 #: Providers whose routes publish a capability manifest we can read.
-_COMPAT = {"openai", "openrouter"}
+_COMPAT = {"google", "openai", "openrouter"}
 
 STATIC = Path(__file__).resolve().parent / "static"
 RUBRIC = Rubric(
@@ -50,7 +50,8 @@ THRESHOLDS = (Threshold("ease", 7), Threshold("solo_marketing", 7))
 
 #: Used when the operator has not named a route. OpenRouter's free tier means a
 #: working chat before anyone has spent anything.
-DEFAULT_ROUTE = {"openrouter": "openrouter/free", "openai": "gpt-4o-mini"}
+DEFAULT_ROUTE = {"openrouter": "openrouter/free", "openai": "gpt-4o-mini",
+                 "google": "gemini-2.5-flash"}
 
 
 class Broadcaster:
@@ -590,7 +591,7 @@ class Workspace:
         from .providers.openai_compat import OpenAICompatClient
 
         key = self.config.key(home=self.home)
-        if not key or self.config.provider not in {"openai", "openrouter"}:
+        if not key or self.config.provider not in _COMPAT:
             return {"models": []}
         client = OpenAICompatClient(self.config.provider, key, self.config.model_id or "")
         return {"models": client.models()}
@@ -644,7 +645,7 @@ class Workspace:
         competitors is worse than an obviously-labelled demo.
         """
         key = self.config.key(home=self.home)
-        if not key or self.config.provider not in {"openai", "openrouter"}:
+        if not key or self.config.provider not in _COMPAT:
             return None
         from .evaluator import ModelEvaluator
         from .providers.base import Capability

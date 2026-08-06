@@ -269,6 +269,7 @@ tbody tr[aria-selected="true"]{box-shadow:inset 2px 0 0 var(--oxide)}
       </div>
       <select id="provider">
         <option value="">Choose a provider…</option>
+        <option value="google">Google — Gemini (has a free tier)</option>
         <option value="anthropic">Anthropic — Claude</option>
         <option value="openai">OpenAI — GPT</option>
         <option value="openrouter">OpenRouter — broker, many models</option>
@@ -562,8 +563,18 @@ const BLURB = {
            + 'evidence gathering falls back to the labelled demo. Keys start <code>sk-</code>.',
   openrouter:'A broker in front of many models, including free ones. Capabilities belong to '
            + 'the <b>route</b>, not to OpenRouter — so a third step appears once your key '
-           + 'is saved, because listing routes needs it. Keys start <code>sk-or-</code>.'
+           + 'is saved, because listing routes needs it. Keys start <code>sk-or-</code>.',
+  google:    'Gemini, direct, through Google\'s OpenAI-compatible endpoint. Google runs a '
+           + 'genuinely free tier, which OpenRouter does not for Gemini — it carries 21 '
+           + 'Gemini routes and none are free. Generation, rules and rendering all run. '
+           + 'Evidence gathering falls back to the demo: Gemini has search grounding, but '
+           + 'this build has not verified it survives the compatibility endpoint, and an '
+           + 'unverified capability is exactly what this design refuses to claim. Get a key '
+           + 'at <b>aistudio.google.com</b>; they start <code>AIza</code>.'
 };
+//: Providers where naming a specific model is worth offering. OpenRouter must
+//: name one; Google may, and defaults to gemini-2.5-flash if left blank.
+const ROUTED = ['openrouter', 'google'];
 function renderSetup(s) {
   SETUP = s;
   // The options live in the document, so a failed fetch cannot leave this empty.
@@ -594,24 +605,36 @@ function renderSetup(s) {
   $('#keyDot').className = 'led ' + (verified ? 'on' : ok ? 'busy' : 'off');
 }
 function pickProvider(p, model) {
-  const isRouter = p === 'openrouter';
-  $('#routeField').classList.toggle('hide', !isRouter);
+  const routed = ROUTED.includes(p), isRouter = p === 'openrouter';
+  $('#routeField').classList.toggle('hide', !routed);
   if (model !== undefined) $('#modelId').value = model || '';
   $('#providerNote').innerHTML = BLURB[p] || 'Pick one to see what it can do here.';
-  if (!isRouter) return;
+  if (!routed) return;
   // Both route controls make an authenticated call to *this* provider. A key
   // saved for a different provider does not unlock them, so arm on the pair.
   const armed = !!(SETUP.has_key && SETUP.provider === p);
-  $('#loadModels').disabled = $('#findRoute').disabled = !armed;
-  $('#routeHint').innerHTML = armed
+  $('#loadModels').disabled = !armed;
+  // Probing is an OpenRouter-shaped problem: a broker's route can be listed,
+  // be free, and still be refused by your account. Google serves its own
+  // models, so there is nothing to discover by calling them one at a time.
+  $('#findRoute').classList.toggle('hide', !isRouter);
+  $('#findRoute').disabled = !armed;
+  $('#modelId').placeholder = isRouter ? 'openrouter/free' : 'gemini-2.5-flash';
+  if (!armed) {
+    $('#routeHint').innerHTML = `<b>Save a ${esc(p)} key in step 2 first.</b> Listing
+      models is an authenticated call, so there is nothing here to look up until a key
+      exists. Left blank, <b>${isRouter ? 'openrouter/free' : 'gemini-2.5-flash'}</b>
+      is used.`;
+    return;
+  }
+  $('#routeHint').innerHTML = isRouter
     ? `Capabilities belong to the route, not to the gateway, so this choice decides
        which pipeline stages can run at all. <b>Find one that works</b> considers only
        routes that publish support for structured output and tools, then places a real
        call against each: free routes first, then the cheapest paid ones, because no
        free route satisfies every stage. Left blank, <b>openrouter/free</b> is used.`
-    : `<b>Save an OpenRouter key in step 2 first.</b> Listing routes is an authenticated
-       call, so there is nothing here to look up until a key exists. Left blank,
-       <b>openrouter/free</b> is used.`;
+    : `Which Gemini model to use. <b>Load routes</b> lists what your key can reach.
+       Left blank, <b>gemini-2.5-flash</b> is used, which is on the free tier.`;
 }
 $('#provider').onchange = e => pickProvider(e.target.value);
 async function loadSetup() { renderSetup(await api('/api/setup')); }
