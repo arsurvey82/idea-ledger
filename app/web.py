@@ -739,12 +739,30 @@ class Workspace:
                 }
                 for s in idea.vector.scores
             ]
+            out["rubric_version"] = idea.vector.rubric_version
             if not RUBRIC.validates(idea.vector):
                 s = score(idea, RUBRIC, THRESHOLDS)
                 out["total"] = s.total
                 out["max"] = s.max_total
                 out["thresholds_met"] = s.thresholds_met
                 out["failed"] = list(s.failed_thresholds)
+
+        # The archived document is meant to be read away from this app, where
+        # "evidence: e3, e7" identifies nothing. Resolve the ids to the claims
+        # and urls they stand for.
+        seen: dict[str, Any] = {}
+        for ev in getattr(idea, "evidence", ()) or ():
+            seen[ev.id] = {"id": ev.id, "claim": getattr(ev, "claim", ""),
+                           "url": getattr(ev, "url", ""),
+                           "name": getattr(ev, "name", "")}
+        out["evidence"] = list(seen.values())
+
+        graph = self.store.load_graph()
+        out["assumptions"] = [
+            {"id": r.assumption_id, "statement": graph.assumptions[r.assumption_id].statement}
+            for r in graph.load_bearing_unverified()
+            if r.assumption_id in graph.assumptions
+        ]
         return out
 
     # -- actions ---------------------------------------------------------
@@ -881,17 +899,99 @@ class Workspace:
 
 
 def _markdown(dossier: Mapping[str, Any]) -> str:
-    lines = [f"# {dossier.get('name', '?')}", ""]
-    if "total" in dossier:
-        lines.append(f"**{dossier['total']}/{dossier['max']}** &middot; {dossier['track']} track")
+    """The archived document, written to be read away from this app.
+
+    A bare score table is not a dossier. Someone opening this file weeks later
+    needs to know what produced the number before they can trust or argue with
+    it: which rubric, from what evidence, and whether a human moved anything.
+    """
+    from datetime import datetime, timezone
+
+    name = dossier.get("name", "?")
+    lines = [f"# {name}", ""]
+
+    facts: list[str] = []
+    if dossier.get("track"):
+        facts.append(f"**Track** {dossier['track']}")
+    if dossier.get("status"):
+        facts.append(f"**Status** {str(dossier['status']).replace('_', ' ')}")
+    if dossier.get("rubric_version") is not None:
+        facts.append(f"**Rubric** v{dossier['rubric_version']}")
+    facts.append("**Archived** " + datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
+    if facts:
+        lines += [" &middot; ".join(facts), ""]
+
+    if dossier.get("total") is not None:
+        lines += [f"## Score {dossier['total']} of {dossier.get('max', '?')}", ""]
+        # Scores only compare inside a track and inside a rubric version. Saying
+        # so in the file stops the number being carried somewhere it means
+        # nothing - which is the failure mode of every shortlist spreadsheet.
+        lines += [
+            "> Computed by code from the evidence below, not assigned by a model. "
+            "Comparable only against other ideas on the same track and rubric version.",
+            "",
+        ]
+    elif dossier.get("status"):
+        lines += [
+            f"## Not scored", "",
+            "> This idea has no score. That is a result, not a gap: the pipeline "
+            "refuses to score an idea whose evidence did not meet the coverage "
+            "policy, rather than scoring it thinly.",
+            "",
+        ]
+
+    dims = dossier.get("dimensions", [])
+    if dims:
+        lines += ["## Dimensions", "",
+                  "| dimension | value | confidence | provenance | what would change it |",
+                  "|---|---:|---:|---|---|"]
+        for d in dims:
+            lines.append(
+                f"| {d['dimension']} | {d['value']} | {d.get('confidence', '')} | "
+                f"{d.get('provenance', '')} | {d.get('falsifier', '')} |"
+            )
+        overridden = [d for d in dims if d.get("provenance") == "overridden"]
+        if overridden:
+            lines += ["", "### Overridden by hand", ""]
+            for d in overridden:
+                # An override stores its reason in the falsifier slot, which is
+                # the right place - the reason *is* what would have to change -
+                # but the summary must show the value it replaced, or the record
+                # of the judgement is incomplete.
+                was = d.get("original")
+                lines.append(
+                    f"- **{d['dimension']}** set to {d['value']}"
+                    + (f", was {was}" if was is not None else "")
+                    + (f" — {d['falsifier']}" if d.get("falsifier") else "")
+                )
+            lines += ["",
+                      "> Overridden dimensions are excluded from calibration, so a "
+                      "judgement call never teaches the system it was a measurement.",
+                      ]
         lines.append("")
-    lines += ["| dimension | value | confidence | provenance | falsifier |",
-              "|---|---|---|---|---|"]
-    for d in dossier.get("dimensions", []):
-        lines.append(
-            f"| {d['dimension']} | {d['value']} | {d['confidence']} | "
-            f"{d['provenance']} | {d['falsifier']} |"
-        )
+
+    ev = dossier.get("evidence") or []
+    lines += ["## Evidence", ""]
+    if ev:
+        for e in ev:
+            url = e.get("url") or ""
+            claim = e.get("claim") or e.get("name") or e.get("id") or "?"
+            lines.append(f"- {claim}" + (f" — <{url}>" if url else ""))
+    else:
+        lines.append("_None recorded._ A score resting on no citable evidence is "
+                     "the thing this ledger exists to make visible.")
+    lines.append("")
+
+    if dossier.get("assumptions"):
+        lines += ["## Load-bearing assumptions", ""]
+        for a in dossier["assumptions"]:
+            lines.append(f"- {a.get('statement', a)}")
+        lines.append("")
+
+    if "(demo)" in str(name):
+        lines += ["---", "",
+                  "_Demo data. Generated without a search-capable provider, so the "
+                  "competitors and evidence are fictional and labelled as such._", ""]
     return "\n".join(lines) + "\n"
 
 

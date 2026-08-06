@@ -49,6 +49,20 @@ _SCORES = {
     ),
 }
 
+#: One falsifier per dimension. A falsifier names the observation that would
+#: move *this* score, so the same sentence repeated down all six rows is not a
+#: weak falsifier - it is no falsifier at all, and it turned the dossier's most
+#: argued-with column into filler. Even in demo mode the shape has to be honest,
+#: because the shape is what an operator learns to read.
+_FALSIFIERS: dict[str, str] = {
+    "demand": "a search-volume or hiring count below your threshold would move this",
+    "competition": "a named incumbent at a lower price would move this",
+    "ease": "a licence or permit requirement absent from your fact base would move this",
+    "capital": "a supplier quote above your budget ceiling would move this",
+    "profit": "a published margin below 20% for this model would move this",
+    "solo_marketing": "evidence that customers only arrive through a sales team would move this",
+}
+
 
 @dataclass(slots=True)
 class DemoEvaluator:
@@ -105,7 +119,7 @@ class DemoEvaluator:
                 value=value,
                 evidence_ids=tuple(e.id for e in evidence[:2]),
                 confidence=0.55,
-                falsifier="a named incumbent at a lower price would move this",
+                falsifier=_FALSIFIERS.get(name, "a contradicting source would move this"),
             )
             for name, value in values.items()
         )
