@@ -73,7 +73,11 @@ DEFAULT_ROUTE = {"openrouter": "openrouter/free", "openai": "gpt-4o-mini"}
 
 #: Anthropic's default, kept beside the others rather than imported at module
 #: scope so the transport stays lazily loaded.
-ANTHROPIC_MODEL = "claude-opus-5"
+#: Sonnet rather than Opus. This workload is search-and-summarise against a
+#: fixed schema, not hard reasoning - the judgement that matters happens in
+#: code afterwards. Opus was the default and is roughly twice the price for
+#: work that does not need it. Overridable per install in Setup.
+ANTHROPIC_MODEL = "claude-sonnet-5"
 
 
 class Broadcaster:
@@ -699,7 +703,26 @@ class Workspace:
         from .providers.openai_compat import OpenAICompatClient
 
         key = self.config.key(home=self.home)
-        if not key or self.config.provider not in _COMPAT:
+        if not key:
+            return {"models": []}
+        if self.config.provider == "anthropic":
+            # Anthropic is worth listing even though it does not speak the
+            # OpenAI dialect: it is the only provider here that can run every
+            # stage, so which model it uses is the operator's main cost lever.
+            import urllib.error
+            import urllib.request
+
+            req = urllib.request.Request(
+                "https://api.anthropic.com/v1/models?limit=100",
+                headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    rows = json.loads(resp.read().decode("utf-8", "replace"))
+            except (urllib.error.URLError, json.JSONDecodeError):
+                return {"models": []}
+            return {"models": [str(m.get("id", "")) for m in rows.get("data", []) if m.get("id")]}
+        if self.config.provider not in _COMPAT:
             return {"models": []}
         client = OpenAICompatClient(self.config.provider, key, self.config.model_id or "")
         return {"models": client.models()}

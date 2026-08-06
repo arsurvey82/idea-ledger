@@ -582,7 +582,7 @@ const BLURB = {
 };
 //: Providers where naming a specific model is worth offering. OpenRouter must
 //: name one; Google may, and defaults to gemini-2.5-flash if left blank.
-const ROUTED = ['openrouter', 'google'];
+const ROUTED = ['openrouter', 'google', 'anthropic'];
 function renderSetup(s) {
   SETUP = s;
   // The options live in the document, so a failed fetch cannot leave this empty.
@@ -633,7 +633,8 @@ function pickProvider(p, model) {
   // models, so there is nothing to discover by calling them one at a time.
   $('#findRoute').classList.toggle('hide', !isRouter);
   $('#findRoute').disabled = !armed;
-  $('#modelId').placeholder = isRouter ? 'openrouter/free' : 'gemini-2.5-flash';
+  $('#modelId').placeholder = {openrouter:'openrouter/free', google:'gemini-2.5-flash',
+                              anthropic:'claude-sonnet-5'}[p] || '';
   if (!armed) {
     $('#routeHint').innerHTML = `<b>Save a ${esc(p)} key in step 2 first.</b> Listing
       models is an authenticated call, so there is nothing here to look up until a key
