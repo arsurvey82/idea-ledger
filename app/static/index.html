@@ -574,12 +574,26 @@ function stageRow(card, m) {
 async function send(text) {
   if (!text.trim() || BUSY) return;
   BUSY = true; $('#send').disabled = true;
-  bubble('me', esc(text));
-  $('#msg').value = '';
-  TURN = null; beginTurn();
-  try { await api('/api/chat', {message: text}); await refresh(); }
-  catch (e) { say('The request failed: ' + e); }
-  finally { BUSY = false; $('#send').disabled = false; $('#msg').focus(); }
+  // Everything after the lock is taken belongs inside the try. bubble() and
+  // beginTurn() used to run before it, so a throw in either left BUSY true
+  // forever: the send button stayed disabled and every suggestion chip became
+  // a no-op, because they all route through here. A lock acquired outside the
+  // region that releases it is a lock that eventually sticks.
+  try {
+    bubble('me', esc(text));
+    $('#msg').value = '';
+    TURN = null; beginTurn();
+    await api('/api/chat', {message: text});
+    await refresh();
+  } catch (e) {
+    // Reported rather than swallowed - a silent failure here is exactly what
+    // made this look frozen instead of broken.
+    console.error(e);
+    try { say('**Something went wrong in the page.** ' + (e && e.message || e)); }
+    catch (_) { /* the transcript itself is broken; the finally still matters */ }
+  } finally {
+    BUSY = false; $('#send').disabled = false; $('#msg').focus();
+  }
 }
 $('#log').addEventListener('scroll', () => { STICK = atBottom(); });
 $('#send').onclick = () => send($('#msg').value);

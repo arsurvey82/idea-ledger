@@ -167,5 +167,83 @@ class ThePageIsIntact(unittest.TestCase):
         self.assertEqual([], offenders, "recursion with no base case")
 
 
+
+
+class TheComposerCannotLock(unittest.TestCase):
+    """The send lock must be released whatever happens.
+
+    BUSY was set, then bubble() and beginTurn() ran *outside* the try. A throw
+    in either skipped the finally, so BUSY stayed true for the life of the page:
+    the send button stayed disabled and every suggestion chip silently did
+    nothing, since they all call send(). It read as the whole chat freezing.
+    """
+
+    def send_body(self) -> str:
+        match = re.search(
+            r"async function send\(text\)\s*\{(.*?)\n\}", page_script(), re.S
+        )
+        assert match, "send() not found"
+        return match.group(1)
+
+    def test_nothing_runs_between_taking_the_lock_and_the_try(self) -> None:
+        body = self.send_body()
+        after_lock = body.split("BUSY = true", 1)[1]
+        before_try = after_lock.split("try", 1)[0]
+        statements = [
+            line.strip() for line in before_try.splitlines()
+            if line.strip()
+            and not line.strip().startswith("//")
+            and "disabled" not in line
+        ]
+        self.assertEqual(
+            [], statements,
+            "these run before the try and can strand BUSY: " + "; ".join(statements),
+        )
+
+    def test_the_lock_is_released_in_a_finally(self) -> None:
+        body = self.send_body()
+        self.assertIn("finally", body)
+        finally_block = body.split("finally", 1)[1]
+        self.assertIn("BUSY = false", finally_block)
+        self.assertIn("disabled = false", finally_block)
+
+    @unittest.skipIf(NODE is None, "node is not installed")
+    def test_a_throw_mid_send_still_frees_the_composer(self) -> None:
+        """Run the real send() with a function inside it rigged to throw."""
+        harness = r"""
+        let BUSY = false, disabled = false;
+        const $ = () => ({ set disabled(v){ disabled = v; }, get disabled(){ return disabled; },
+                           value: '', focus(){} });
+        const esc = s => s;
+        const bubble = () => { throw new Error('render blew up'); };
+        const beginTurn = () => {};
+        const say = () => {};
+        const api = async () => ({});
+        const refresh = async () => {};
+        let TURN = null;
+        const console = { error(){} };
+        SEND_BODY
+        send('hello').then(() => {
+          console.log(JSON.stringify({busy: BUSY, disabled}));
+        });
+        """
+        source = page_script()
+        match = re.search(r"(async function send\(text\)\s*\{.*?\n\})", source, re.S)
+        assert match
+        script = harness.replace("SEND_BODY", match.group(1)).replace(
+            "const console = { error(){} };", ""
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "s.js"
+            path.write_text(script, encoding="utf-8")
+            proc = subprocess.run(
+                [NODE, str(path)], capture_output=True, text=True, timeout=30
+            )
+        self.assertEqual(proc.returncode, 0, proc.stderr[-800:])
+        state = json.loads(proc.stdout.strip().splitlines()[-1])
+        self.assertFalse(state["busy"], "BUSY stayed set after a throw")
+        self.assertFalse(state["disabled"], "the send button stayed disabled")
+
+
 if __name__ == "__main__":
     unittest.main()

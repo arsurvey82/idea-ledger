@@ -1,206 +1,258 @@
 # Idea Ledger
 
-A decision ledger with a language model attached to it.
+A local tool that evaluates business ideas against **your** rules and keeps the
+scores honest as facts change.
 
-It holds business ideas, facts about you, and evidence-backed claims. It can propose
-new ideas — but its main job is keeping scores honest as facts change, because that
-is what the work actually consists of: one generation pass, then many corrections.
+You describe what to look at, in your own words. Candidates are generated, gated
+against rules you control, checked against real competitors with citable urls,
+then scored. The scoring is plain code — no model ever assigns a number — so the
+same evidence always produces the same score, and a rejection can always name
+the rule that caused it.
 
-**It is not** a chatbot, a service, or an autonomous agent. Control flow is ordinary
-code. The model sits at the edge, alongside the database, and is trusted about as
-much as any other remote service.
+Everything runs on your machine. No account, no server, no third-party Python
+packages.
 
 ---
 
-## Status
+## Why it works this way
 
-This is under construction. The table says what runs today, so you can tell the
-difference between a feature and a plan.
+This began as [imirchev/business-idea-agent](https://github.com/imirchev/business-idea-agent),
+a prompt pack: 281 lines of instructions plus 5,262 lines of the output they
+produced. Reading that output against itself showed the problem. Across 54
+scorecards, one dimension used 3 of its 10 possible values; totals spanned 35–47
+with a standard deviation of 2.39. The measurement error was larger than the
+discrimination — the scores could not separate the ideas they were meant to
+rank. One idea's whole case rested on a licence nobody had checked, and nothing
+in the system could answer "what else did that assumption hold up?"
 
-| Component | State |
+None of that is fixable with a better prompt, because none of it is a language
+problem. So the parts that must not vary became code, and the model kept only
+the parts that genuinely need judgement:
+
+| Deterministic (code) | Probabilistic (model) |
 |---|---|
-| Domain types, provenance, status transitions | working |
-| Constraint predicates and gate evaluation | working |
-| Scoring, thresholds, rank-within-track | working |
-| Assumption graph and invalidation | working |
-| Calibration loop | working |
-| Provider capability negotiation | working |
-| Configuration and key resolution | working |
-| Pipeline orchestrator (ST0–ST6) | working |
-| Rule intake: triage, placement, dry-run, confirmation | working |
-| SQLite persistence | working |
-| Web interface + live stage stream | working |
-| Anthropic transport (request/response) | written, **not yet called live** |
-| Rule compile step (plain language → typed rule) | not yet — the stages after it are |
+| Gates and constraint predicates | Proposing candidates |
+| Scoring, thresholds, ranking | Gathering evidence |
+| Provenance and status transitions | Attempting refutation |
+| Assumption invalidation | Rendering prose |
+| Calibration | |
 
-The whole test suite runs with no API key, no network, and no third-party
-packages. That is deliberate: everything the system is *trusted* for lives in a
-pure core that a model cannot reach.
+The model is an adapter, not the core. It cannot skip a gate, cannot decide it
+has searched enough, and never sees a score.
 
 ---
 
-## Prerequisites
+## What it does
 
-- **Python 3.11 or newer.** That is the only thing you must install.
-- **An API key** for one provider — Anthropic, OpenAI, or OpenRouter — once you
-  want to run an evaluation. Nothing before that point needs one.
-
-No Node, no npm, no build step, no database server.
+- **Talk to it normally.** No command grammar — "lets look at custom wooden
+  furniture in Florida", "why was that one rejected?", "add a rule rejecting
+  anything over $5k".
+- **Gates run in code, before any model judges.** A rejection names the rule.
+- **It refuses to score thin evidence.** Too few competitors with resolvable
+  urls and an idea comes back `under_researched` rather than scored on nothing.
+- **Every score carries a falsifier** — the observation that would move it.
+  That is the column you argue with.
+- **Overrides are recorded and quarantined.** Your judgement calls never teach
+  the system they were measurements.
+- **Assumption graph.** Mark one premise false and it names every score, idea
+  and document downstream of it.
+- **Capability negotiation.** If your provider cannot search, the evidence stage
+  is refused with a reason rather than quietly inventing competitors.
+- **Self-diagnosis.** A Check tab that tests storage, credentials, connection,
+  model, capabilities and transport against your real key.
+- **Archives you can read without this app.** Dated folders holding
+  `dossier.md` and `snapshot.json`.
 
 ---
 
-## Install
+## Running it
+
+**Prerequisite:** Python 3.11 or newer. Nothing else — no `pip install`, no
+virtualenv. The whole thing is standard library.
 
 ```bash
-git clone <your-fork-url> idea-ledger
+git clone https://github.com/arsurvey82/idea-ledger.git
 cd idea-ledger
-python -m unittest discover -s tests -t .   # should pass before you have a key
-python -m app                               # opens http://127.0.0.1:8420
+python -m app
 ```
 
-With no key configured the interface still works: **Run** uses a labelled demo
-evaluator so you can watch the pipeline gate, reject, score, and archive without
-spending anything or calling a model.
-
----
-
-## Configure your key
-
-**Your key never goes in this repository.** The config file stores the *name* of
-an environment variable, never the value, so a config file committed by accident
-leaks a variable name and nothing else.
-
-Set the variable your provider uses:
-
-```powershell
-# PowerShell
-$env:ANTHROPIC_API_KEY = 'your-key'
-```
+Your browser opens at `http://127.0.0.1:8420`.
 
 ```bash
-# bash / zsh
-export ANTHROPIC_API_KEY='your-key'
+python -m app --port 9000 --no-browser     # if 8420 is taken
 ```
 
-| Provider | Variable |
-|---|---|
-| Anthropic | `ANTHROPIC_API_KEY` |
-| OpenAI | `OPENAI_API_KEY` |
-| OpenRouter | `OPENROUTER_API_KEY` |
+Data lives in `~/.idea-ledger` (override with `IDEA_LEDGER_HOME`). Your API key
+is **never** written there — it goes to your operating system's secret store:
+Windows DPAPI, macOS Keychain, or `secret-tool` on Linux. If no store is
+available, saving is refused rather than writing plain text.
 
-To check what the app can see — this prints where the key came from and its last
-four characters, never the key:
+### First run
+
+1. **Setup** → pick a provider → paste your key → name it if you like →
+   **Save & test**.
+2. **Check** → **Run checks**. Eleven checks against your real key; the first
+   failure is usually the only one worth reading.
+3. **Facts** → set `location` and `licences_held` to your actual situation. The
+   shipped values are placeholders, and gates read these fields by name.
+4. Type something in the chat box.
+
+### Choosing a provider
+
+Capabilities decide which pipeline stages can run, so this is a real choice
+rather than a preference:
+
+| Provider | All five stages | Notes |
+|---|---|---|
+| **Anthropic** | yes | Native web search and schema enforcement. Defaults to `claude-sonnet-5`; the model is selectable. |
+| **Google Gemini** | no | Genuinely free tier. Generation, rules and rendering work. Search grounding is not exposed on the OpenAI-compatible endpoint, so evidence and refutation are refused. |
+| **OpenAI** | no | This build does not use the Responses API surface, so it cannot search. |
+| **OpenRouter** | route-dependent | Capabilities belong to the route, not the gateway. **Find one that works** filters on published support for structured output and tools, then places a real call against each candidate — free routes first, then cheapest paid. |
+
+Several keys can be saved and named; switching between them switches provider
+with them.
+
+---
+
+## Reading the output
+
+| Outcome | Means |
+|---|---|
+| `scored` | Passed your gates, found enough cited competitors, got a number |
+| `gate_rejected` | Killed by one of your rules, in code, before any model judged it |
+| `under_researched` | **Not a failure.** Refused to score rather than score thin evidence |
+| `refuted` | A check found the premise does not hold |
+| `duplicate` | Already on your reject list; reviving one is a deliberate act |
+
+Scores compare only within a track and within a rubric version. The dossier says
+so in the file, so the number cannot be carried somewhere it means nothing.
+
+---
+
+## How rules work
+
+A rule is **data**, never executed as code. Symbolic rules are predicates over
+your fields, read by a small interpreter — no `eval`, no `exec`, no attribute
+traversal:
+
+```json
+{
+  "field": "capital_required_usd",
+  "op": "lte",
+  "other": "budget_ceiling_usd"
+}
+```
+
+Operators are `lte`, `gte`, `lt`, `gt`, `eq`, `ne`, `falsy`, `truthy`, combined
+with `all`, `any`, `not`. `other` compares one field against another, so a rule
+that reads your budget keeps working when you change the budget.
+
+A rule referencing a missing field **fails closed** — nothing passes — rather
+than silently letting ideas through.
+
+Add one in the Rules tab or just ask in chat. Either way it is dry-run against
+the whole ledger first and reports its blast radius; activation is a separate,
+explicit act.
+
+---
+
+## Layout
+
+```
+app/
+  core/            no I/O, no clock, no model
+    types.py       provenance, status transitions, evidence
+    rules.py       the predicate interpreter
+    scoring.py     totals, thresholds, rank-within-track
+    assumptions.py the invalidation graph
+    calibration.py measured bias, with a sample floor
+    manifest.py    the pipeline's self-description
+  providers/       one adapter per wire format
+  pipeline.py      ST0-ST6, deterministic
+  evaluator.py     the model-backed stages
+  web.py           stdlib HTTP server
+  static/          the single-page interface
+tests/             176 tests, no key and no network required
+e2e_check.py       clean-install walkthrough against a real provider
+```
+
+Ports and adapters. The core has no I/O, no clock and no model, which is why
+most of the suite needs neither a key nor a network.
+
+---
+
+## Testing
 
 ```bash
-python -c "from app.config import Config; print(Config().with_provider('anthropic').describe())"
+python -m unittest discover -s tests -t .   # 176 tests, offline
+python e2e_check.py                          # real provider, clean install
 ```
+
+`e2e_check.py` starts a second server on an empty home directory and drives the
+same HTTP surface the browser uses, against your real key. It keeps its failures
+in the report.
 
 ---
 
-## Choosing a provider
+## Modifying it with Claude
 
-Providers are interchangeable, but not identical, and the difference matters.
+Paste this at the start of a session:
 
-Some stages need capabilities a backend may not have. The clearest case is
-**server-side web search**: without it, a model asked to name competitors will
-invent them, which is the single largest error in the system this replaces. So
-capabilities are negotiated once, at setup, and a backend that cannot do the job
-is told so before you run anything:
-
-```
-openrouter / (route not chosen)
-  generate       ok          provider supports every capability this stage needs
-  evidence       cannot run  missing server_search - without search the model invents
-                             competitors instead of finding them
-  refute         cannot run  missing server_search - a refutation with no source is an
-                             opinion, not a check
-  render         ok          provider supports every capability this stage needs
-  compile_rule   ok          provider supports every capability this stage needs
-```
-
-Two ways to clear that:
-
-1. **Point at a route that can search.** OpenRouter passes through to whatever
-   model you name, so declare that route's real capabilities and re-negotiate.
-2. **Add a search adapter.** A standalone search API supplies what the model
-   provider lacks; the stage then runs as *compensated*, and the report says so.
-
-Swap backends freely. Where one genuinely cannot do the job, you find out at
-setup in one sentence — never by reading a plausible answer that turns out to be
-invented.
-
----
-
-## Your data versus this repository
-
-The split is the privacy boundary, and on a public repo it is the whole point.
-
-| Ships here, read-only | Created on your machine, never committed |
-|---|---|
-| Rubric: dimensions and definitions | Your fact base — who you are, your constraints |
-| Gate thresholds, track definitions | Idea ledger, scores, statuses |
-| Output schemas, prompt templates | Evidence, assumptions, run log |
-| Help content | Overrides, archive, exports |
-| An example fact base — **fictional** | Reject list — starts empty |
-
-Operator data lives in `~/.idea-ledger/`, which `.gitignore` blocks. A second
-person cloning this gets the framework and an empty ledger. Nobody inherits
-anyone else's profile, income, or family details.
-
-Override the location with `IDEA_LEDGER_HOME` if you keep more than one profile.
+> I'm working on Idea Ledger, a local neuro-symbolic tool for evaluating
+> business ideas. Read `README.md` first, then `app/core/manifest.py` and
+> `defaults/manifest.json` — the manifest is the pipeline's self-description and
+> drives both rule placement and capability negotiation.
+>
+> Load-bearing constraints. Please do not break them:
+>
+> - **Standard library only.** No third-party packages anywhere, including
+>   tests. Someone should be able to clone and run with only Python installed.
+> - **`app/core/` is pure.** No I/O, no clock, no model, no randomness. If a
+>   change needs any of those, it belongs above the core.
+> - **Gates and scoring never consult a model.** The model proposes, gathers
+>   evidence, attempts refutation, and renders prose. Nothing else.
+> - **Rules are data.** The predicate interpreter must never gain `eval`,
+>   `exec`, `getattr` traversal, or anything that executes rule content.
+> - **Capabilities are checked, not claimed.** If a provider might not support
+>   something, verify it against that provider's own metadata and declare the
+>   truth. A stage that cannot run is refused with a reason. Silently degrading
+>   is the specific failure this design exists to prevent.
+> - **Opaque provider state round-trips unmodified.** OpenRouter's
+>   `reasoning_details` and Gemini's `thought_signature` are carried, never
+>   interpreted, never dropped.
+> - **A key is never written to the repository, the config file, a log, or a
+>   report.** The config stores a reference, not a secret.
+> - **ASCII in anything printed.** Reports get read on Windows consoles using
+>   cp1252, where an em-dash is a crash.
+>
+> When adding a provider, register it in every table that needs it — the
+> registry, `ENDPOINTS`, `connectivity.PROBES`, `_COMPAT` — and add a
+> `diagnose()` check. Forgetting one produces a silent downgrade rather than an
+> error; that has happened three times.
+>
+> Run `python -m unittest discover -s tests -t .` before and after. When you
+> change `app/static/index.html`, `tests/test_page_script.py` executes it against
+> a stub DOM — that suite exists because the Python tests cannot see the browser
+> and two UI outages shipped unnoticed.
 
 ---
 
-## Concepts worth knowing before you use it
+## Known limits
 
-**Provenance.** Every number is `derived` (computed from evidence), `overridden`
-(you edited it; the original is kept), or `seeded` (imported, no evidence). The
-dossier shows which. Human overrides are excluded from calibration — counting
-your corrections as model error would make the system measure you instead of it.
+Stated plainly so you can tell a limitation from a bug:
 
-**Tracks.** Scores rank *within* a track only. A physical-goods idea and a
-service idea are not on one scale, and the system refuses to sort them together
-rather than quietly doing it.
-
-**Rubric versions.** Adding, removing, or redefining a dimension is a breaking
-change: every stored score stops being comparable to every future one, and the
-missing evidence cannot honestly be backfilled. The ledger versions rather than
-pretends, and offers a costed re-run instead of guessing.
-
-**Assumptions.** When a claim is used, the dependency is recorded. Later you can
-ask what breaks if it is wrong, and get an answer instead of doing archaeology:
-
-```
-4 artifact(s) depend on this assumption:
-  "Partner holds a Florida licence"
-
-  dossier (1)
-    bayline-advantages           ranked the credential first
-  idea (1)
-    casa-sello                   scored as licence-gated
-  score (1)
-    casa-sello-v1                competition dimension assumed the moat
-```
-
-**Calibration.** Every rescore is measured. Once there are enough observations,
-the measured bias is fed back into the prompts. Below that floor the system
-reports a direction and refuses to state a number — a confident prior computed
-from three data points is the overconfidence it exists to correct.
+- Google's search grounding is not reachable through its OpenAI-compatible
+  endpoint. Verified rather than assumed: `google_search` is rejected in all
+  three documented forms.
+- The pipeline has not yet been observed completing end to end on real data.
+  The transports are verified individually; the full five-stage loop is not.
+- Rule-change-by-conversation works, but has been seen on few phrasings.
+- Free tiers rate-limit quickly. Fine for exploring, not for a long session.
 
 ---
 
-## Troubleshooting
+## Credit
 
-| Symptom | Cause |
-|---|---|
-| `no key found; expected environment variable X` | The variable is unset in *this* shell. Setting it in another window does not carry over |
-| A stage reports `cannot run` | The provider lacks a capability that stage needs. Change route or add a compensator — see above |
-| `NotComparable: track spans rubric versions` | Ideas scored under different rubrics. View separately, or re-run the evidence pass |
-| `IllegalTransition: rejected -> active` | Rejected ideas revive to *on hold* for review, never straight back to active |
-| `UnresolvedInput` on a gate | A rule reads a field your fact base does not define. Add the field, or drop the rule |
-
----
-
-## Licence
-
-Add one before publishing.
+The rubric, the six dimensions, the track split and the original framing come
+from [imirchev/business-idea-agent](https://github.com/imirchev/business-idea-agent).
+This is a reimplementation of those ideas as a system rather than as a prompt.
