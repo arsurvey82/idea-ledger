@@ -247,3 +247,77 @@ def delete(home: Path, account: str) -> None:
 def tail(secret: str, keep: int = 4) -> str:
     """Enough to tell two keys apart. Never more."""
     return "..." + secret[-keep:] if len(secret) > keep else "(too short to display)"
+
+
+# --------------------------------------------------------------------------
+# A named index of what has been saved.
+#
+# No OS secret store can be enumerated portably: Windows DPAPI has no listing
+# at all, and `security`/`secret-tool` need the account name before they will
+# say anything. So the *names* live in a plain file next to the ledger while the
+# secrets stay in the OS store. This file is safe to read, back up, or commit by
+# accident - it holds labels and last-four digits, never a key.
+# --------------------------------------------------------------------------
+
+INDEX_FILE = "keys.json"
+
+
+@dataclass(frozen=True, slots=True)
+class SavedKey:
+    account: str      # the OS store record name
+    provider: str
+    label: str        # what the operator calls it
+    tail: str         # last four characters, to tell two keys apart
+
+    def as_dict(self) -> dict[str, str]:
+        return {"account": self.account, "provider": self.provider,
+                "label": self.label, "tail": self.tail}
+
+
+def account_for(provider: str, label: str) -> str:
+    """A stable record name. Labels are the operator's words, so slug them."""
+    slug = "".join(c if c.isalnum() else "-" for c in label.strip().lower()).strip("-")
+    slug = "-".join(p for p in slug.split("-") if p)[:40]
+    return f"{provider}:{slug}" if slug else provider
+
+
+def saved(home: Path) -> list[SavedKey]:
+    path = home / INDEX_FILE
+    if not path.exists():
+        return []
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    out = [
+        SavedKey(
+            account=str(r.get("account", "")),
+            provider=str(r.get("provider", "")),
+            label=str(r.get("label", "")) or str(r.get("account", "")),
+            tail=str(r.get("tail", "")),
+        )
+        for r in rows if isinstance(r, dict) and r.get("account")
+    ]
+    # Only report records the store can still produce. A key deleted out from
+    # under us must not appear in a picker that would then resolve to nothing.
+    return [k for k in out if fetch(home, k.account)]
+
+
+def remember(home: Path, account: str, provider: str, label: str, secret: str) -> None:
+    """Record that this key exists. The secret itself is never written here."""
+    rows = [k.as_dict() for k in saved(home) if k.account != account]
+    rows.append(SavedKey(account, provider, label or account, tail(secret)).as_dict())
+    home.mkdir(parents=True, exist_ok=True)
+    (home / INDEX_FILE).write_text(
+        json.dumps(rows, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def forget(home: Path, account: str) -> None:
+    """Delete the secret and drop it from the index, in that order."""
+    delete(home, account)
+    rows = [k.as_dict() for k in saved(home) if k.account != account]
+    home.mkdir(parents=True, exist_ok=True)
+    (home / INDEX_FILE).write_text(
+        json.dumps(rows, indent=2) + "\n", encoding="utf-8"
+    )

@@ -7,6 +7,14 @@ asserted about.
 
 from __future__ import annotations
 
+from unittest import mock
+
+import os
+
+import re
+
+import pathlib
+
 import json
 import threading
 import unittest
@@ -31,6 +39,7 @@ from app.core.types import (
 from app.demo import DemoEvaluator
 from app.rule_intake import AmbiguousRule, RuleIntake
 from app.store import Store
+from app.config import Config
 from app.web import Workspace, make_handler
 
 FACTS = FactBase({"budget_ceiling_usd": 20_000, "accepts_live_negotiation": False})
@@ -380,3 +389,112 @@ class WebApi(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChatReachesTheModel(unittest.TestCase):
+    """Every provider that can chat must be routed to the model, not the grammar.
+
+    "lets run wooden furniture" is unambiguous to any model. It answered "I do
+    not have a command for that" because the dispatch listed providers as a
+    literal that had never been updated for google - the third place in this
+    codebase to hard-code that set, after the connection probe and the model
+    list. So the invariant is asserted rather than the spelling.
+    """
+
+    def test_no_provider_set_is_written_as_a_literal_in_the_dispatch(self) -> None:
+        source = (
+            pathlib.Path(__file__).resolve().parent.parent / "app" / "web.py"
+        ).read_text(encoding="utf-8")
+        literals = re.findall(
+            r'provider\s+(?:not\s+)?in\s+\{[^}]*"open(?:ai|router)"[^}]*\}', source
+        )
+        self.assertEqual(
+            [], literals,
+            "use _COMPAT so a new provider is not silently excluded; found: "
+            + "; ".join(literals),
+        )
+
+    def test_chat_uses_the_model_for_every_compat_provider(self) -> None:
+        from app.web import _COMPAT
+
+        for provider in sorted(_COMPAT):
+            with self.subTest(provider=provider):
+                with TemporaryDirectory() as tmp:
+                    ws = Workspace(pathlib.Path(tmp))
+                    ws.config = Config().with_provider(provider)
+                    seen: list[str] = []
+                    ws._agent_chat = lambda text, ev: (seen.append(text), {"ok": True})[1]
+                    # Supplying the key through the environment is the real
+                    # resolution path, and Config is frozen so it cannot be
+                    # stubbed anyway.
+                    env = {ws.config.key_ref.env_var: "sk-test-key-value-long-enough"}
+                    with mock.patch.dict(os.environ, env, clear=False):
+                        ws.chat("lets run wooden furniture", None)
+                    self.assertEqual(
+                        ["lets run wooden furniture"], seen,
+                        f"{provider} fell through to the keyword grammar",
+                    )
+
+    def test_google_is_among_them(self) -> None:
+        from app.web import _COMPAT
+
+        self.assertIn("google", _COMPAT)
+
+
+class NamedKeys(unittest.TestCase):
+    """Several keys, told apart by name, with a deterministic save outcome.
+
+    "saved" on its own never said which of three things happened: a new key
+    stored, the same key re-submitted, or a provider change with no key at all.
+    """
+
+    def test_labels_become_stable_account_names(self) -> None:
+        from app.secrets import account_for
+
+        self.assertEqual("google:work-laptop", account_for("google", "Work Laptop"))
+        self.assertEqual("google:a-b", account_for("google", "  a  /  b  "))
+        # No label is not an error; it just means the provider's own record.
+        self.assertEqual("google", account_for("google", "   "))
+
+    def test_the_index_holds_names_and_never_secrets(self) -> None:
+        from app import secrets as store
+
+        with TemporaryDirectory() as tmp:
+            home = pathlib.Path(tmp)
+            secret = "AIzaTOTALLY-SECRET-VALUE-abcdefghijk"
+            store.remember(home, "google:mine", "google", "mine", secret)
+            text = (home / store.INDEX_FILE).read_text(encoding="utf-8")
+            self.assertIn("mine", text)
+            self.assertNotIn(secret, text, "the index must never contain a key")
+            self.assertIn(secret[-4:], text, "the tail is what tells two keys apart")
+
+    def test_a_key_the_store_has_lost_is_not_listed(self) -> None:
+        """A picker entry that resolves to nothing is worse than no entry."""
+        from app import secrets as store
+
+        with TemporaryDirectory() as tmp:
+            home = pathlib.Path(tmp)
+            store.remember(home, "ghost", "google", "ghost", "AIza-never-stored-xxxx")
+            self.assertEqual([], [k.account for k in store.saved(home)])
+
+    def test_switching_key_switches_provider_with_it(self) -> None:
+        """A stored OpenRouter key is not a Google credential."""
+        with TemporaryDirectory() as tmp:
+            home = pathlib.Path(tmp)
+            ws = Workspace(home)
+            ws.config = Config().with_provider("google")
+
+            from app import secrets as store
+
+            with mock.patch.object(store, "saved", return_value=[
+                store.SavedKey("openrouter:alt", "openrouter", "alt", "...9999")
+            ]):
+                out = ws.use_key({"account": "openrouter:alt"})
+            self.assertNotIn("error", out)
+            self.assertEqual("openrouter", ws.config.provider)
+            self.assertEqual("openrouter:alt", ws.config.key_ref.account)
+
+    def test_selecting_a_key_that_does_not_exist_is_refused(self) -> None:
+        with TemporaryDirectory() as tmp:
+            ws = Workspace(pathlib.Path(tmp))
+            self.assertIn("error", ws.use_key({"account": "nope"}))

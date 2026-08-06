@@ -211,6 +211,12 @@ class ChatAgent:
                         "id": c.id or f"call_{i}",
                         "type": "function",
                         "function": {"name": c.name, "arguments": c.arguments or "{}"},
+                        # Echoed back exactly as received, for the same reason as
+                        # reasoning_details above. Gemini 3.x attaches a
+                        # thought_signature here and rejects the next turn
+                        # outright without it, so dropping this does not degrade
+                        # the reply - it ends the conversation with a 400.
+                        **({"extra_content": c.extra} if c.extra else {}),
                     }
                     for i, c in enumerate(reply.tool_calls)
                 ]

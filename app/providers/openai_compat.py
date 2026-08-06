@@ -44,6 +44,12 @@ class ToolCall:
     id: str = ""
     name: str = ""
     arguments: str = ""
+    #: Provider state attached to this call, carried and never interpreted.
+    #: Gemini 3.x puts a thought_signature here and rejects the *next* turn with
+    #: 400 if the call is replayed without it - "Function call is missing a
+    #: thought_signature in functionCall parts". So a tool call that is not
+    #: echoed back intact costs the whole conversation, not just the signature.
+    extra: dict[str, Any] = field(default_factory=dict)
 
     def parsed(self) -> dict[str, Any]:
         try:
@@ -188,6 +194,8 @@ class OpenAICompatClient:
                     call = calls.setdefault(idx, ToolCall())
                     if frag.get("id"):
                         call.id = frag["id"]
+                    if frag.get("extra_content"):
+                        call.extra = dict(frag["extra_content"])
                     fn = frag.get("function") or {}
                     if fn.get("name"):
                         call.name = fn["name"]
@@ -236,12 +244,22 @@ class OpenAICompatClient:
 
         choice = (data.get("choices") or [{}])[0]
         message = choice.get("message") or {}
+        raw_calls = message.get("tool_calls") or []
         reply = Reply(
             text=message.get("content") or "",
             finish_reason=choice.get("finish_reason") or "",
             model=data.get("model") or self.model,
             reasoning=str(message.get("reasoning") or ""),
             reasoning_details=list(message.get("reasoning_details") or []),
+            tool_calls=[
+                ToolCall(
+                    id=str(c.get("id", "")),
+                    name=str((c.get("function") or {}).get("name", "")),
+                    arguments=str((c.get("function") or {}).get("arguments", "")),
+                    extra=dict(c.get("extra_content") or {}),
+                )
+                for c in raw_calls
+            ],
         )
         for ann in message.get("annotations") or []:
             url = (ann.get("url_citation") or {}).get("url") if isinstance(ann, dict) else None
@@ -343,6 +361,71 @@ def route_parameters(api_key: str, model: str, provider: str = "openrouter") -> 
     return frozenset()
 
 
+#: Model families that are not conversational, however they are named. Google's
+#: list mixes embeddings, image, video and speech models in with chat models.
+_NOT_CHAT = ("embedding", "imagen", "veo", "tts", "live", "computer-use", "aqa", "learnlm")
+
+
+def _gemini_rank(model: str) -> tuple:
+    """Sort key: newest first, cheapest tier first, previews last.
+
+    'lite' variants are preferred because they are the ones the free tier
+    actually serves; a preview can vanish, so it is a fallback rather than a
+    first choice.
+    """
+    import re
+
+    match = re.search(r"gemini-(\d+)(?:\.(\d+))?", model)
+    major = int(match.group(1)) if match else 0
+    minor = int(match.group(2) or 0) if match else 0
+    return (
+        -major, -minor,
+        0 if "flash-lite" in model else 1 if "flash" in model else 2,
+        1 if ("preview" in model or "exp" in model) else 0,
+        model,
+    )
+
+
+def pick_default_model(
+    api_key: str,
+    provider: str,
+    *,
+    on_try: Callable[[str, str], None] | None = None,
+    limit: int = 6,
+) -> tuple[str, list[tuple[str, str]]]:
+    """Ask the key which model it can actually run, instead of assuming one.
+
+    A hard-coded default is a guess that rots: 'gemini-2.5-flash' was shipped
+    here and Google had already retired it for new accounts, so a valid key
+    produced "no route called gemini-2.5-flash" and the whole chat surface fell
+    back to a keyword grammar. The list is per-account, so only the account can
+    answer this.
+
+    Returns ``(model, attempts)``; model is "" when nothing answered.
+    """
+    client = OpenAICompatClient(provider, api_key, "", retries=0)
+    ids = [m.replace("models/", "") for m in client.models()]
+    chat = [m for m in ids if not any(s in m for s in _NOT_CHAT)]
+    chat.sort(key=_gemini_rank if provider == "google" else (lambda m: m))
+
+    attempts: list[tuple[str, str]] = []
+    for model in chat[:limit]:
+        if on_try:
+            on_try(model, "trying")
+        probe = OpenAICompatClient(provider, api_key, model, retries=0, timeout=45)
+        try:
+            probe.chat([{"role": "user", "content": "ok"}])
+            attempts.append((model, "works"))
+            if on_try:
+                on_try(model, "works")
+            return model, attempts
+        except ChatError as exc:
+            attempts.append((model, str(exc)))
+            if on_try:
+                on_try(model, str(exc)[:90])
+    return "", attempts
+
+
 def find_working_route(
     api_key: str,
     *,
@@ -404,19 +487,30 @@ def find_working_route(
     return "", attempts
 
 
+def _unwrap(payload: Any) -> dict[str, Any]:
+    """Google returns errors as a one-element array; everyone else as an object.
+
+    Without this the detail was dropped and every Google failure read "returned
+    400: Bad Request", which says nothing about what to change.
+    """
+    if isinstance(payload, list) and payload:
+        payload = payload[0]
+    return payload if isinstance(payload, dict) else {}
+
+
 def _meta(payload: Any) -> dict[str, Any]:
-    if isinstance(payload, dict):
-        meta = (payload.get("error") or {}).get("metadata")
-        if isinstance(meta, dict):
-            return meta
-    return {}
+    meta = (_unwrap(payload).get("error") or {}).get("metadata")
+    return meta if isinstance(meta, dict) else {}
 
 
 def _explain(exc: urllib.error.HTTPError, provider: str, model: str) -> str:
     payload: Any = {}
     try:
         payload = json.loads(exc.read().decode("utf-8", "replace"))
-        message = (payload.get("error") or {}).get("message") or json.dumps(payload)[:200]
+        message = (
+            (_unwrap(payload).get("error") or {}).get("message")
+            or json.dumps(payload)[:200]
+        )
     except Exception:
         message = exc.reason or ""
 

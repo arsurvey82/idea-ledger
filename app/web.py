@@ -42,6 +42,18 @@ from .store import Store
 #: Providers whose routes publish a capability manifest we can read.
 _COMPAT = {"google", "openai", "openrouter"}
 
+#: Providers where probing routes one at a time tells you something. A broker's
+#: route can be listed, be free, and still be refused by your account, which only
+#: a real call reveals. Google serves its own models, so there is nothing to
+#: discover that way - this is a deliberate subset of _COMPAT, not an oversight.
+_PROBEABLE = {"openai", "openrouter"}
+
+#: Providers whose model list is small and self-served enough to pick from
+#: automatically. OpenRouter is excluded on purpose: it fronts hundreds of
+#: routes with wildly different prices, so choosing one silently is not a
+#: favour - that is what the explicit "Find one that works" button is for.
+_AUTO_MODEL = {"google", "openai"}
+
 STATIC = Path(__file__).resolve().parent / "static"
 RUBRIC = Rubric(
     version=1,
@@ -52,8 +64,12 @@ THRESHOLDS = (Threshold("ease", 7), Threshold("solo_marketing", 7))
 
 #: Used when the operator has not named a route. OpenRouter's free tier means a
 #: working chat before anyone has spent anything.
-DEFAULT_ROUTE = {"openrouter": "openrouter/free", "openai": "gpt-4o-mini",
-                 "google": "gemini-2.5-flash"}
+#:
+#: Google is deliberately absent. Any id here is a guess with a shelf life, and
+#: the guess that was here - gemini-2.5-flash - had already been retired for new
+#: accounts, so a valid key reported "no route called gemini-2.5-flash". Google's
+#: model is resolved from the key on save instead; see _AUTO_MODEL.
+DEFAULT_ROUTE = {"openrouter": "openrouter/free", "openai": "gpt-4o-mini"}
 
 
 class Broadcaster:
@@ -262,6 +278,8 @@ class Workspace:
         store_info = secret_store.describe()
         return {
             "key_complaint": key_complaint,
+            "saved_keys": [k.as_dict() for k in secret_store.saved(self.home)],
+            "active_account": self.config.key_ref.account,
             "provider": self.config.provider,
             "model_id": self.config.model_id,
             "providers": sorted(REGISTRY),
@@ -303,17 +321,48 @@ class Workspace:
             if complaint:
                 return {"error": complaint, **self.setup()}
             advisory = key_advisory(cfg.provider, key)
+            label = str(payload.get("label", "")).strip()
+            account = secret_store.account_for(cfg.provider, label)
+            # Saving the same value again is not an error and not a change. Say
+            # which of the three happened, so "saved" always means something.
+            already = secret_store.fetch(self.home, account) == key
             try:
-                info = secret_store.store(self.home, cfg.key_ref.account or provider, key)
-                cfg = replace(cfg, key_ref=replace(cfg.key_ref, source=KeySource.KEYRING))
-                stored = f"{info.backend}: {info.detail}"
+                info = secret_store.store(self.home, account, key)
+                secret_store.remember(self.home, account, cfg.provider, label, key)
+                cfg = replace(
+                    cfg,
+                    key_ref=replace(cfg.key_ref, source=KeySource.KEYRING, account=account),
+                )
+                stored = (
+                    f"already saved as {label or account}, unchanged"
+                    if already else
+                    f"{info.backend}: {info.detail}"
+                )
             except secret_store.SecretStoreUnavailable as exc:
                 # Refuse rather than silently write plaintext.
                 return {"error": f"not stored: {exc}", "env_var": cfg.key_ref.env_var}
 
+        # Resolve a model from the key rather than a constant. Shipping
+        # "gemini-2.5-flash" as a default meant a perfectly valid key answered
+        # "no route called gemini-2.5-flash", because Google had retired it for
+        # new accounts. Only the account can say what it can run.
+        picked = ""
+        if cfg.provider in _AUTO_MODEL and not cfg.model_id and cfg.key(home=self.home):
+            from .providers.openai_compat import pick_default_model
+
+            self.log(f"resolving a model for {cfg.provider}")
+            picked, _ = pick_default_model(
+                cfg.key(home=self.home) or "", cfg.provider,
+                on_try=lambda m, note: self.log(f"  {m}: {note}"),
+            )
+            if picked:
+                cfg = replace(cfg, model_id=picked)
+                self.log(f"model resolved to {picked}")
+
         cfg.save(self.home)
         self.config = cfg
-        return {"ok": True, "stored": stored, "advisory": advisory, **self.setup()}
+        return {"ok": True, "stored": stored, "advisory": advisory,
+                "picked_model": picked, **self.setup()}
 
     # -- connectivity ----------------------------------------------------
     def test_connection(self) -> dict[str, Any]:
@@ -345,9 +394,14 @@ class Workspace:
 
         # With a working key this is a real conversation. Without one it falls
         # back to commands, and says so, rather than pretending to understand.
-        if text and self.config.key(home=self.home) and self.config.provider in {
-            "openai", "openrouter"
-        }:
+        #
+        # The provider set is _COMPAT, not a literal. Spelling it out here left
+        # google excluded, so every message from a working Gemini key fell
+        # through to the keyword grammar and answered "I do not have a command
+        # for that" - the exact app-like behaviour this surface exists to avoid.
+        # Chat needs a chat endpoint and nothing else; search and schema support
+        # are stage requirements, not conversation requirements.
+        if text and self.config.key(home=self.home) and self.config.provider in _COMPAT:
             try:
                 return self._agent_chat(text, evaluator)
             except Exception as exc:
@@ -458,9 +512,35 @@ class Workspace:
             )
             return {"ok": True}
 
+        # Reached two ways: no key at all, or a model call that failed above.
+        # They need different sentences - claiming "no key saved" to someone
+        # whose key is stored and working is simply false.
+        rules = self.rules()
+        active = [r for r in rules if r.active]
+        has_key = bool(self.config.key(home=self.home))
+        why = (
+            "the model call above failed, so nothing could read it"
+            if has_key
+            else "there's no key saved, so nothing is reading your words"
+        )
         say(
-            f"I do not have a command for “{text}” yet, and I would rather say so "
-            "than guess. Try `help`, or use the panels on the right."
+            f"I can't interpret “{text}” — {why}. That is the only reason this "
+            "reply is a menu instead of an answer.\n\n"
+            "**What this is.** A ledger for business ideas. You describe what you "
+            "want to evaluate; candidates are generated, gated against your own "
+            "rules, checked for real competitors, then scored. The scoring is "
+            "plain code — no model assigns a number, so the same evidence always "
+            "produces the same score.\n\n"
+            f"**What's already yours.** {len(active)} active rule(s) and "
+            f"{len(self.facts().fields)} facts, both editable in the panels on the "
+            "right. Gates run before any model sees an idea, which is why a "
+            "rejection can name the rule that caused it.\n\n"
+            + ("**To get past this:** open Setup and press Save & test; the model "
+               "is re-resolved from your key each time, so a retired one is replaced. "
+               if has_key else
+               "**To get past this:** open Setup, choose a provider and save a key. ")
+            + "Then say what you just said, in your own words, and it will be read "
+              "properly. Meanwhile `run <brief>`, `rules`, `facts` and `status` work."
         )
         return {"ok": True}
 
@@ -542,7 +622,7 @@ class Workspace:
 
         payload = payload or {}
         key = self.config.key(home=self.home)
-        if not key or self.config.provider not in {"openai", "openrouter"}:
+        if not key or self.config.provider not in _PROBEABLE:
             return {"error": "save a working key for openai or openrouter first"}
 
         # Free routes are tried first because they cost nothing, but the search
@@ -599,13 +679,41 @@ class Workspace:
         client = OpenAICompatClient(self.config.provider, key, self.config.model_id or "")
         return {"models": client.models()}
 
-    def forget_key(self) -> dict[str, Any]:
+    def forget_key(self, payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
         from . import secrets as secret_store
 
-        account = self.config.key_ref.account or self.config.provider
+        payload = payload or {}
+        account = str(payload.get("account", "")).strip() or (
+            self.config.key_ref.account or self.config.provider
+        )
         if account:
-            secret_store.delete(self.home, account)
+            secret_store.forget(self.home, account)
         return {"ok": True, **self.setup()}
+
+    def use_key(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Switch to a key already saved, without retyping it.
+
+        Selecting a key implies its provider: a stored OpenRouter key is not a
+        Google credential, and quietly keeping the old provider would send it to
+        the wrong endpoint.
+        """
+        from . import secrets as secret_store
+
+        account = str(payload.get("account", "")).strip()
+        match = next(
+            (k for k in secret_store.saved(self.home) if k.account == account), None
+        )
+        if match is None:
+            return {"error": f"no saved key called {account!r}", **self.setup()}
+
+        cfg = self.config.with_provider(match.provider)
+        cfg = replace(
+            cfg, key_ref=replace(cfg.key_ref, source=KeySource.KEYRING, account=account)
+        )
+        cfg.save(self.home)
+        self.config = cfg
+        self.log(f"using saved key {match.label} ({match.provider})")
+        return {"ok": True, "using": match.label, **self.setup()}
 
     def dossier(self, idea_id: str) -> dict[str, Any]:
         idea = next((i for i in self.store.load_ideas() if i.id == idea_id), None)
@@ -852,8 +960,10 @@ def make_handler(ws: Workspace, evaluator_factory: Callable[[], Any]):
                     return self._json(ws.test_connection())
                 if route.path == "/api/find-route":
                     return self._json(ws.find_route(body))
+                if route.path == "/api/use-key":
+                    return self._json(ws.use_key(body))
                 if route.path == "/api/forget-key":
-                    return self._json(ws.forget_key())
+                    return self._json(ws.forget_key(body))
                 if route.path == "/api/rule/preview":
                     return self._json(ws.preview_rule(body))
                 if route.path == "/api/rule/activate":

@@ -207,3 +207,109 @@ class GoogleProvider(unittest.TestCase):
 
         cfg = Config().with_provider("google")
         self.assertEqual("GEMINI_API_KEY", cfg.key_ref.env_var)
+
+
+class OpaqueToolCallState(unittest.TestCase):
+    """Provider state attached to a tool call must survive a round trip.
+
+    Gemini 3.x attaches a thought_signature to every function call and rejects
+    the *next* turn with 400 - "Function call is missing a thought_signature in
+    functionCall parts" - if the call is replayed without it. Dropping it does
+    not degrade the answer; it ends the conversation. The agent understood
+    "lets run wooden furniture", ran the pipeline, scored a candidate, and then
+    died on the follow-up turn for exactly this reason.
+    """
+
+    SIGNED = {"google": {"thought_signature": "Eq8CCqwCARFNMg"}}
+
+    def test_a_streamed_tool_call_keeps_its_extra_content(self) -> None:
+        frag = {
+            "index": 0, "id": "abc", "extra_content": self.SIGNED,
+            "function": {"name": "ping", "arguments": "{}"},
+        }
+        call = openai_compat.ToolCall()
+        # Mirrors the reassembly in chat(): fragments merge by index.
+        if frag.get("id"):
+            call.id = frag["id"]
+        if frag.get("extra_content"):
+            call.extra = dict(frag["extra_content"])
+        self.assertEqual(self.SIGNED, call.extra)
+
+    def test_the_agent_echoes_it_back_unmodified(self) -> None:
+        from app.chat_agent import ChatAgent
+
+        call = openai_compat.ToolCall(
+            id="abc", name="list_rules", arguments="{}", extra=self.SIGNED
+        )
+        replies = [
+            openai_compat.Reply(tool_calls=[call]),
+            openai_compat.Reply(text="done"),
+        ]
+
+        class Client:
+            def chat(self, messages, **_):
+                Client.seen = list(messages)
+                return replies.pop(0)
+
+        agent = ChatAgent(
+            client=Client(),
+            tools={"list_rules": lambda: {"rules": []}},
+            emit_text=lambda _t: None,
+            emit_delta=lambda _t: None,
+            emit_tool=lambda *_a: None,
+        )
+        agent.ask("what rules are loaded")
+
+        assistant = next(
+            m for m in Client.seen
+            if m.get("role") == "assistant" and m.get("tool_calls")
+        )
+        sent = assistant["tool_calls"][0]
+        self.assertEqual(self.SIGNED, sent.get("extra_content"))
+
+    def test_a_call_without_extra_content_stays_clean(self) -> None:
+        """Providers that send none must not receive an empty key."""
+        from app.chat_agent import ChatAgent
+
+        replies = [
+            openai_compat.Reply(
+                tool_calls=[openai_compat.ToolCall(id="x", name="list_rules", arguments="{}")]
+            ),
+            openai_compat.Reply(text="done"),
+        ]
+
+        class Client:
+            def chat(self, messages, **_):
+                Client.seen = list(messages)
+                return replies.pop(0)
+
+        ChatAgent(
+            client=Client(), tools={"list_rules": lambda: {"rules": []}},
+            emit_text=lambda _t: None, emit_delta=lambda _t: None,
+            emit_tool=lambda *_a: None,
+        ).ask("rules")
+        assistant = next(
+            m for m in Client.seen
+            if m.get("role") == "assistant" and m.get("tool_calls")
+        )
+        self.assertNotIn("extra_content", assistant["tool_calls"][0])
+
+
+class ErrorDetail(unittest.TestCase):
+    def test_a_google_error_array_is_unwrapped(self) -> None:
+        """Google wraps errors in a one-element array; everyone else does not.
+
+        Without unwrapping, every Google failure read "returned 400: Bad
+        Request", which says nothing about what to change - and hid the
+        thought_signature message above for an entire debugging round.
+        """
+        payload = [{"error": {"code": 400, "message": "missing a thought_signature"}}]
+        self.assertEqual(
+            "missing a thought_signature",
+            (openai_compat._unwrap(payload).get("error") or {}).get("message"),
+        )
+        plain = {"error": {"message": "plain object still works"}}
+        self.assertEqual(
+            "plain object still works",
+            (openai_compat._unwrap(plain).get("error") or {}).get("message"),
+        )

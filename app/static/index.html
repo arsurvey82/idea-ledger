@@ -275,15 +275,23 @@ tbody tr[aria-selected="true"]{box-shadow:inset 2px 0 0 var(--oxide)}
         <option value="openrouter">OpenRouter — broker, many models</option>
       </select>
       <div class="hint" id="providerNote" style="margin:6px 0 14px"></div>
+      <div class="field hide" id="savedField">
+        <label>saved keys</label>
+        <select id="savedKeys"></select>
+        <div class="hint">Switching here also switches the provider, since a key
+          belongs to the service that issued it.</div>
+      </div>
       <div class="field">
         <label id="keyLabel">2 · api key</label>
         <input type="password" id="apiKey" placeholder="paste your key" autocomplete="off" spellcheck="false">
+        <input type="text" id="keyLabelName" placeholder="name it, e.g. personal — optional"
+               autocomplete="off" spellcheck="false" style="margin-top:6px">
         <div class="hint" id="storeHint"></div>
       </div>
       <div class="row">
         <button class="btn primary" id="saveSetup">Save &amp; test</button>
         <button class="btn" id="testConn">Test connection</button>
-        <button class="btn" id="forgetKey">Forget key</button>
+        <button class="btn" id="forgetKey">Forget this key</button>
       </div>
       <p class="muted" id="saveMsg" style="margin-top:8px"></p>
       <!-- Route comes last on purpose. Listing a broker's usable routes is an
@@ -599,6 +607,12 @@ function renderSetup(s) {
     : `<b>No OS secret store here</b> (${esc(s.store_detail)}). Saving is refused rather than
        writing plain text — set the environment variable <code>${esc(s.env_var)}</code> instead.`;
   $('#apiKey').disabled = !s.store_available;
+  // The picker only earns its space once there is a choice to make.
+  const keys = s.saved_keys || [];
+  $('#savedField').classList.toggle('hide', keys.length < 1);
+  $('#savedKeys').innerHTML = keys.map(k =>
+    `<option value="${esc(k.account)}"${k.account === s.active_account ? ' selected' : ''}>${
+      esc(k.label)} — ${esc(k.provider)} ${esc(k.tail)}</option>`).join('');
   $('#negotiation').textContent = s.negotiation;
   $('#setupText').textContent = s.config_text + '\n\nledger     ' + s.home;
   $('#keyWord').textContent = verified ? 'key verified' : ok ? 'key untested' : 'no key';
@@ -647,16 +661,20 @@ $('#saveSetup').onclick = async () => {
   const typed = $('#modelId').value.trim();
   // Only send a route if it differs from the stored one. Otherwise a stale
   // field value overwrites a route the probe just verified.
-  const body = {provider, key: $('#apiKey').value};
+  const body = {provider, key: $('#apiKey').value, label: $('#keyLabelName').value};
   if (typed && typed !== (SETUP.model_id || '')) body.model_id = typed;
   const out = await api('/api/setup', body);
   $('#apiKey').value = '';
   if (out.error) { $('#saveMsg').textContent = out.error; renderSetup(await api('/api/setup')); return; }
   renderSetup(out);
+  $('#keyLabelName').value = '';
   // An unrecognised key format is worth seeing but never worth blocking on.
   if (out.advisory) $('#storeHint').innerHTML =
     `<b>${esc(out.advisory)}</b><br>` + $('#storeHint').innerHTML;
-  $('#saveMsg').textContent = (out.stored ? 'saved to ' + out.stored + ' — ' : 'saved — ') + 'testing…';
+  // Three distinct outcomes, named. "saved" on its own never said which.
+  const what = out.stored || 'provider updated, no key supplied';
+  const model = out.picked_model ? ` · model resolved to ${out.picked_model}` : '';
+  $('#saveMsg').textContent = `${what}${model} — testing…`;
   await testConnection(true);
 };
 async function testConnection(quiet) {
@@ -691,7 +709,20 @@ $('#loadModels').onclick = async () => {
     ? `${n} routes loaded — click the field and type to search them`
     : 'no routes returned; the key was rejected or the account lists none';
 };
-$('#forgetKey').onclick = async () => { renderSetup(await api('/api/forget-key', {})); $('#saveMsg').textContent = 'key removed from the OS store'; };
+$('#savedKeys').onchange = async e => {
+  $('#saveMsg').textContent = 'switching…';
+  const o = await api('/api/use-key', {account: e.target.value});
+  if (o.error) { $('#saveMsg').textContent = o.error; return; }
+  renderSetup(o);
+  $('#provider').value = o.provider || '';
+  pickProvider(o.provider || '', o.model_id);
+  $('#saveMsg').textContent = `using ${o.using} — press Test connection to confirm`;
+};
+$('#forgetKey').onclick = async () => {
+  const account = $('#savedKeys').value || undefined;
+  renderSetup(await api('/api/forget-key', {account}));
+  $('#saveMsg').textContent = 'key removed from the OS store and from the list';
+};
 /* ---------- rules panel ---------- */
 let PENDING = null;
 $('#previewRule').onclick = async () => {
