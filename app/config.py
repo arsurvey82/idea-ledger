@@ -252,9 +252,14 @@ class Config:
         ANTHROPIC_API_KEY, and why the key never appeared to resolve.
         """
         env_var = DEFAULT_ENV_VARS.get(provider, self.key_ref.env_var)
+        # A route belongs to the provider that serves it. Carrying it across
+        # left 'google/gemma-4-26b-a4b-it:free' - an OpenRouter route - set as a
+        # Gemini model id, which no request could ever satisfy.
+        model_id = self.model_id if provider == self.provider else ""
         return replace(
             self,
             provider=provider,
+            model_id=model_id,
             key_ref=replace(self.key_ref, env_var=env_var, account=provider),
         )
 

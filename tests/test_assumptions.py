@@ -316,3 +316,56 @@ class KeyValidation(unittest.TestCase):
         key, complaint = validate_key("someone-else", "xyz-" + "d" * 40)
         self.assertEqual("", complaint)
         self.assertTrue(key)
+
+
+class ProviderSwitching(unittest.TestCase):
+    """Switching providers must not leave the previous one's settings behind."""
+
+    def test_the_route_does_not_survive_a_provider_change(self) -> None:
+        """A route belongs to the provider that serves it.
+
+        Carrying it across left 'google/gemma-4-26b-a4b-it:free' - an OpenRouter
+        route whose id merely begins with 'google/' - configured as a Gemini
+        model id. Nothing could satisfy that request.
+        """
+        cfg = dataclasses.replace(
+            Config().with_provider("openrouter"),
+            model_id="google/gemma-4-26b-a4b-it:free",
+        )
+        self.assertEqual("", cfg.with_provider("google").model_id)
+
+    def test_reselecting_the_same_provider_keeps_the_route(self) -> None:
+        """Saving the form again must not silently discard a chosen route."""
+        cfg = dataclasses.replace(
+            Config().with_provider("openrouter"), model_id="a/b:free"
+        )
+        self.assertEqual("a/b:free", cfg.with_provider("openrouter").model_id)
+
+    def test_the_env_var_follows_the_provider(self) -> None:
+        cfg = Config().with_provider("openrouter")
+        self.assertEqual("GEMINI_API_KEY", cfg.with_provider("google").key_ref.env_var)
+
+
+class ConnectionProbe(unittest.TestCase):
+    def test_a_configured_provider_is_never_reported_as_unchosen(self) -> None:
+        """The message that sent someone hunting for a setting already correct.
+
+        google was configured and stored, but had no entry in the probe table,
+        and the check reported "No provider chosen" - which is a different
+        problem with a different fix.
+        """
+        from app.connectivity import check
+
+        blank = check("", None)
+        self.assertEqual("No provider chosen", blank.headline)
+
+        unknown = check("someone-else", "sk-key-value-longer-than-twenty")
+        self.assertNotIn("No provider chosen", unknown.headline)
+        self.assertIn("someone-else", unknown.headline)
+
+    def test_every_registered_provider_has_a_credential_check(self) -> None:
+        """Adding a provider without a probe is what caused this."""
+        from app.connectivity import PROBES
+        from app.providers import REGISTRY
+
+        self.assertEqual(set(), set(REGISTRY) - set(PROBES))

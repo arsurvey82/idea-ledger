@@ -37,6 +37,12 @@ PROBES: Mapping[str, Mapping[str, object]] = {
         "headers": lambda key: {"Authorization": f"Bearer {key}"},
         "console": "https://openrouter.ai/settings/keys",
     },
+    "google": {
+        # Google's OpenAI-compatible surface, so one bearer header covers it.
+        "url": "https://generativelanguage.googleapis.com/v1beta/openai/models",
+        "headers": lambda key: {"Authorization": f"Bearer {key}"},
+        "console": "https://aistudio.google.com/apikey",
+    },
 }
 
 
@@ -60,8 +66,20 @@ class Probe:
 
 def check(provider: str, key: str | None) -> Probe:
     provider = (provider or "").strip().lower()
-    if provider not in PROBES:
+    if not provider:
         return Probe(False, "No provider chosen", fix="Pick a provider first.")
+    if provider not in PROBES:
+        # A provider *was* chosen; this table just has no probe for it. Saying
+        # "no provider chosen" sent someone hunting for a setting that was
+        # already correct, so name the real gap.
+        return Probe(
+            False,
+            f"No connection test for {provider}",
+            f"{provider} is configured, but this build has no credential check "
+            "for it, so the key cannot be verified before a real request.",
+            "Run something and read the error, or choose a provider with a test: "
+            + ", ".join(sorted(PROBES)) + ".",
+        )
     if not key:
         return Probe(
             False,
