@@ -259,6 +259,61 @@ class OpenAICompatClient:
         return sorted({str(r.get("id", "")) for r in rows if r.get("id")})[:limit]
 
 
+def _routes_supporting(
+    api_key: str, provider: str, wanted: set[str]
+) -> frozenset[str]:
+    """Route ids whose published parameter list includes any of ``wanted``.
+
+    Empty when the manifest is unreachable, which callers read as "no filter"
+    rather than "nothing qualifies".
+    """
+    url = MODEL_LISTS.get(provider)
+    if not url:
+        return frozenset()
+    req = urllib.request.Request(
+        url, headers={"Authorization": f"Bearer {api_key}"}, method="GET"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            rows = json.loads(resp.read().decode("utf-8", "replace")).get("data") or []
+    except Exception:
+        return frozenset()
+    return frozenset(
+        str(r.get("id", "")) for r in rows
+        if wanted & set(r.get("supported_parameters") or ())
+    )
+
+
+def route_parameters(api_key: str, model: str, provider: str = "openrouter") -> frozenset[str]:
+    """Which request parameters this specific route actually honours.
+
+    OpenRouter publishes ``supported_parameters`` per route, and it is the only
+    honest source for this: a route can accept ``response_format`` in the
+    request, return 200, and reply in markdown anyway. Reading the manifest
+    beats probing, because a probe cannot distinguish "ignored the schema" from
+    "answered a question that happened to need no schema".
+
+    Returns an empty set when the list cannot be fetched, so callers fall back
+    to whatever they assumed rather than hard-failing on a network hiccup.
+    """
+    url = MODEL_LISTS.get(provider)
+    if not url:
+        return frozenset()
+    req = urllib.request.Request(
+        url, headers={"Authorization": f"Bearer {api_key}"}, method="GET"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            rows = json.loads(resp.read().decode("utf-8", "replace")).get("data") or []
+    except Exception:
+        return frozenset()
+    base = model.replace(":online", "")   # search is a suffix, not a route
+    for row in rows:
+        if str(row.get("id", "")) == base:
+            return frozenset(row.get("supported_parameters") or ())
+    return frozenset()
+
+
 def find_working_route(
     api_key: str,
     *,
@@ -278,9 +333,15 @@ def find_working_route(
     Returns ``(winner, attempts)``; winner is "" when nothing worked.
     """
     client = OpenAICompatClient(provider, api_key, "", retries=0)
+    # Structured output is what the pipeline needs and what a probe cannot see:
+    # a route without it answers the probe happily and then returns markdown at
+    # the generate stage. Filter on the published parameter list first, so the
+    # probe only ever chooses between routes that could actually do the work.
+    capable = _routes_supporting(api_key, provider, {"response_format", "structured_outputs"})
     candidates = [
         m for m in client.models()
-        if not free_only or m.endswith(":free") or m == f"{provider}/free"
+        if (not free_only or m.endswith(":free") or m == f"{provider}/free")
+        and (not capable or m in capable)
     ]
     # Deterministic single-upstream routes first; meta-routers last, because
     # they may work once and fail the next call.

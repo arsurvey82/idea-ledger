@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from .base import Capability, Completion, ModelSpec
-from .openai_compat import ChatError, OpenAICompatClient
+from .openai_compat import ChatError, OpenAICompatClient, route_parameters
 
 #: Suffix OpenRouter uses to turn on web search for any route.
 ONLINE_SUFFIX = ":online"
@@ -38,11 +38,37 @@ class CompatProvider:
         return self.provider
 
     def capabilities(self) -> frozenset[Capability]:
-        caps = {Capability.STRUCTURED_OUTPUT, Capability.STRICT_TOOLS}
-        if self.provider == "openrouter":
-            # Any route can be put online with the suffix, so search is real here.
-            caps.add(Capability.SERVER_SEARCH)
+        """What this route can actually do, not what the gateway can do.
+
+        This used to declare STRUCTURED_OUTPUT unconditionally. That was the one
+        assumption in the whole negotiation layer that was never checked, and it
+        is the assumption that failed: cohere/north-mini-code:free accepts
+        response_format, returns 200, and answers in markdown, because
+        response_format is absent from its supported_parameters. Negotiation
+        reported the generate stage as ready and the stage then crashed on the
+        schema parse - precisely the pretending this layer exists to prevent.
+        """
+        if self.provider != "openrouter":
+            return frozenset({Capability.STRUCTURED_OUTPUT, Capability.STRICT_TOOLS})
+
+        params = route_parameters(self.api_key, self.model)
+        if not params:
+            # The manifest was unreachable. Assume the optimistic set rather
+            # than blocking every stage on a transient network failure; a wrong
+            # guess surfaces as a stage error, not as silent bad data.
+            return frozenset({Capability.STRUCTURED_OUTPUT, Capability.STRICT_TOOLS,
+                              Capability.SERVER_SEARCH, Capability.THINKING})
+
+        caps: set[Capability] = set()
+        if {"response_format", "structured_outputs"} & params:
+            caps.add(Capability.STRUCTURED_OUTPUT)
+        if "tools" in params:
+            caps.add(Capability.STRICT_TOOLS)
+        if {"reasoning", "include_reasoning"} & params:
             caps.add(Capability.THINKING)
+        # Search is a route suffix rather than a parameter, so it is available
+        # on any route the gateway will put online.
+        caps.add(Capability.SERVER_SEARCH)
         return frozenset(caps)
 
     def default_model(self) -> ModelSpec:

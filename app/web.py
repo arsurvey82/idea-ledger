@@ -37,6 +37,9 @@ from .providers import (
 from .rule_intake import ImpactPreview, RuleIntake, RuleProposal
 from .store import Store
 
+#: Providers whose routes publish a capability manifest we can read.
+_COMPAT = {"openai", "openrouter"}
+
 STATIC = Path(__file__).resolve().parent / "static"
 RUBRIC = Rubric(
     version=1,
@@ -201,6 +204,24 @@ class Workspace:
             "manifest": self.manifest.report(),
         }
 
+    def _route_capabilities(self, fallback: Any) -> frozenset:
+        """What the *named route* can do, asked of the live adapter.
+
+        Falls back to the gateway's declaration when there is no key to ask
+        with, since the route manifest is an authenticated read.
+        """
+        key = self.config.key(home=self.home)
+        if not (key and self.config.model_id and self.config.provider in _COMPAT):
+            return fallback.capabilities()
+        from .providers.compat_adapter import CompatProvider
+
+        try:
+            return CompatProvider(
+                provider=self.config.provider, api_key=key, model=self.config.model_id
+            ).capabilities()
+        except Exception:
+            return fallback.capabilities()
+
     def setup(self) -> dict[str, Any]:
         from . import secrets as secret_store
 
@@ -210,8 +231,14 @@ class Workspace:
             if self.config.model_id:
                 # A named route is part of the provider's identity, so the
                 # capability report must show it rather than "(route not chosen)".
+                #
+                # The capabilities must be re-derived for that route, not copied
+                # from the gateway. Passing backend.capabilities() back in was a
+                # no-op that relabelled the report while leaving the gateway's
+                # optimistic claims intact - which is how a route with no
+                # response_format support was reported as ready to generate.
                 backend = with_capabilities(
-                    backend, backend.capabilities(), self.config.model_id
+                    backend, self._route_capabilities(backend), self.config.model_id
                 )
             n = negotiate(backend, default_requirements())
             report, ok = n.report(), n.ok
