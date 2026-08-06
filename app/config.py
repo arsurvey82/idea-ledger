@@ -34,6 +34,61 @@ DEFAULT_ENV_VARS: Mapping[str, str] = {
 }
 
 
+#: What each provider's keys actually look like. Checked before storing, because
+#: an unchecked field will happily accept anything: a 302-character browser
+#: console traceback was once saved as a key, and the only symptom was eight
+#: probe cards all reporting "rejected the key", which points at the account
+#: rather than at the paste. Refusing at the door names the real problem.
+KEY_PREFIXES: Mapping[str, str] = {
+    "anthropic": "sk-ant-",
+    "openai": "sk-",
+    "openrouter": "sk-or-",
+}
+MIN_KEY_LEN, MAX_KEY_LEN = 20, 250
+
+
+def validate_key(provider: str, raw: str) -> tuple[str, str]:
+    """Return ``(cleaned_key, complaint)``. A non-empty complaint means refuse.
+
+    Structural checks come first and are phrased around what the operator most
+    likely did, since the realistic failures are a stray paste, a truncated
+    copy, or a key belonging to a different provider.
+    """
+    key = (raw or "").strip()
+    if not key:
+        return "", "Paste a key first - the field is empty."
+    if any(c.isspace() for c in key):
+        head = key.split()[0][:12]
+        return "", (
+            f"That is not a key: it contains spaces or line breaks, and starts "
+            f"'{head}...'. It looks like text pasted from somewhere else. Copy the "
+            "key on its own."
+        )
+    if any(ord(c) < 32 or ord(c) == 127 for c in key):
+        return "", "That text contains control characters, so it is not a key."
+    if len(key) < MIN_KEY_LEN:
+        return "", (
+            f"That is only {len(key)} characters. Keys are longer than "
+            f"{MIN_KEY_LEN}; the copy was probably cut short."
+        )
+    if len(key) > MAX_KEY_LEN:
+        return "", (
+            f"That is {len(key)} characters, far longer than any key. Something "
+            "other than a key was pasted."
+        )
+    want = KEY_PREFIXES.get(provider)
+    if want and not key.startswith(want):
+        other = [p for p, pre in KEY_PREFIXES.items()
+                 if p != provider and pre != "sk-" and key.startswith(pre)]
+        hint = (f" It looks like a {other[0]} key - switch the provider above, or "
+                "paste the matching one.") if other else ""
+        return "", (
+            f"A {provider} key starts '{want}', and this one starts "
+            f"'{key[:len(want)]}'.{hint}"
+        )
+    return key, ""
+
+
 class KeySource(str, Enum):
     ENVIRONMENT = "environment"
     KEYRING = "keyring"

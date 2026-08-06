@@ -30,12 +30,20 @@ button,input,textarea,select{font:inherit;color:inherit}
 .muted{color:var(--dim);font-size:13px}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 /* ---------- shell: chat left, panels right ---------- */
-.shell{display:grid;grid-template-columns:minmax(0,1fr) 470px;height:100vh}
+/* grid-template-rows:minmax(0,1fr) is load-bearing. A grid item's default
+   min-height is auto, so without it .chat refuses to shrink below its own
+   content: the transcript grows past 100vh, .log never gets a bounded height
+   to scroll inside, and the composer is pushed off the bottom of a body that
+   cannot scroll either. The same reasoning applies to min-height:0 below. */
+.shell{display:grid;grid-template-columns:minmax(0,1fr) 470px;
+  grid-template-rows:minmax(0,1fr);height:100vh;overflow:hidden}
 @media (max-width:1080px){.shell{grid-template-columns:minmax(0,1fr) 380px}}
 @media (max-width:800px){.shell{grid-template-columns:minmax(0,1fr)} .side{display:none}}
 /* ---------- chat ---------- */
-.chat{display:flex;flex-direction:column;min-width:0;background:var(--bg)}
-.chat header{display:flex;gap:10px;align-items:center;flex-wrap:nowrap;min-width:0;
+.chat{display:flex;flex-direction:column;min-width:0;min-height:0;height:100%;
+  overflow:hidden;background:var(--bg)}
+/* flex:none on both ends of the column, so only .log absorbs the slack. */
+.chat header{display:flex;gap:10px;align-items:center;flex-wrap:nowrap;min-width:0;flex:none;
   padding:12px 20px;border-bottom:1px solid var(--rule)}
 .chat header>.btn{flex:0 0 auto}
 .brand{font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;
@@ -111,7 +119,8 @@ button,input,textarea,select{font:inherit;color:inherit}
   padding:3px 11px;font-size:12px;cursor:pointer;font-family:var(--mono)}
 .sugg button:hover{border-color:var(--oxide);color:var(--oxide)}
 /* ---------- side panels ---------- */
-.side{border-left:1px solid var(--rule);background:var(--bg-2);display:flex;flex-direction:column;overflow:hidden}
+.side{border-left:1px solid var(--rule);background:var(--bg-2);display:flex;
+  flex-direction:column;min-height:0;height:100%;overflow:hidden}
 .tabs{display:flex;border-bottom:1px solid var(--rule);overflow-x:auto}
 .tabs button{background:none;border:0;border-bottom:2px solid transparent;color:var(--dim);
   padding:12px 14px;cursor:pointer;font-family:var(--mono);font-size:11px;letter-spacing:.12em;
@@ -305,12 +314,20 @@ tbody tr[aria-selected="true"]{box-shadow:inset 2px 0 0 var(--oxide)}
 </div>
 <script>
 const $ = s => document.querySelector(s);
+/* Every server call goes through here: POST with a JSON body, GET without.
+   Both panels and chat depend on it, so losing it takes the whole page down. */
+const api = async (p, body) => (await fetch(p, body ? {
+  method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+} : {})).json();
 function atBottom() {
   const l = $('#log');
   return l.scrollHeight - l.scrollTop - l.clientHeight < 90;
 }
 let STICK = true;
-function follow() { if (STICK) follow(); }
+/* Pin the transcript to the newest message, but only while the operator has
+   not scrolled up to read something. STICK is cleared by the scroll handler,
+   which is what makes streaming output readable instead of yanking the view. */
+function follow() { if (STICK) { const l = $('#log'); l.scrollTop = l.scrollHeight; } }
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 /* A small, deliberately limited markdown renderer. Escaping happens first, so
    model output can never inject markup; only the constructs below are revived.
@@ -552,10 +569,15 @@ function renderSetup(s) {
   // The options live in the document, so a failed fetch cannot leave this empty.
   $('#provider').value = s.provider || '';
   pickProvider(s.provider || '', s.model_id);
-  const ok = s.has_key, verified = s.verified;
+  // A stored value that fails validation is worse than no key: it produces
+  // provider rejections that read as an account problem. Say so up front.
+  const bad = s.key_complaint, ok = s.has_key && !bad, verified = s.verified && !bad;
   $('#keyState').className = 'state ' + (ok ? 'good' : 'bad');
   $('#stLed').className = 'led ' + (verified ? 'on' : ok ? 'busy' : 'off');
-  $('#keyText').innerHTML = ok
+  $('#keyText').innerHTML = bad
+    ? `<span class="hd">The stored key is not a key</span>${esc(bad)}
+       <span class="muted">Press Forget key, then paste the real one.</span>`
+    : ok
     ? `<span class="hd">${verified ? 'Connected' : 'Key found, not yet tested'}</span>
        ${esc(s.key_detail)}. <span class="muted">Next: ${esc((s.next_step||'').replace(/_/g,' '))}</span>`
     : `<span class="hd">No key yet</span>${esc(s.key_detail)}.`;

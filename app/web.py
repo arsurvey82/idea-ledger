@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, urlparse
 
 from dataclasses import replace
 
-from .config import DEFAULT_ENV_VARS, Config, KeySource, user_dir
+from .config import DEFAULT_ENV_VARS, Config, KeySource, user_dir, validate_key
 from .core.assumptions import AssumptionGraph, summarise as summarise_assumptions
 from .core.manifest import Manifest
 from .core.rules import ChangeClass, Rule, RuleTarget
@@ -219,8 +219,19 @@ class Workspace:
             report, ok = str(exc), False
 
         source, detail = self.config.key_status(home=self.home)
+        # A key stored before validation existed - or set in a shell by hand -
+        # can still be nonsense. Re-check what is actually there on every read,
+        # so the page can say "this is not a key" instead of leaving the
+        # operator to infer it from a column of provider rejections.
+        stored_key = self.config.key(home=self.home)
+        key_complaint = (
+            validate_key(self.config.provider, stored_key)[1]
+            if stored_key and self.config.provider
+            else ""
+        )
         store_info = secret_store.describe()
         return {
+            "key_complaint": key_complaint,
             "provider": self.config.provider,
             "model_id": self.config.model_id,
             "providers": sorted(REGISTRY),
@@ -255,6 +266,12 @@ class Workspace:
         stored = ""
         key = str(payload.get("key", "")).strip()
         if key:
+            # Checked before it reaches the store, so a stray paste is refused
+            # while the operator still has the clipboard, rather than surfacing
+            # later as a wall of "rejected the key" from the provider.
+            key, complaint = validate_key(cfg.provider, key)
+            if complaint:
+                return {"error": complaint, **self.setup()}
             try:
                 info = secret_store.store(self.home, cfg.key_ref.account or provider, key)
                 cfg = replace(cfg, key_ref=replace(cfg.key_ref, source=KeySource.KEYRING))

@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from app.config import Config, KeySource, SetupStep
+from app.config import Config, KeySource, SetupStep, validate_key
 from app.core.assumptions import (
     Assumption,
     AssumptionGraph,
@@ -237,3 +237,60 @@ class Configuration(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KeyValidation(unittest.TestCase):
+    """A key field that accepts anything turns a paste slip into an account hunt.
+
+    The case that motivated this: a browser console traceback was pasted into
+    the key box and stored. Every route probe then answered "rejected the key",
+    which reads as an OpenRouter account problem and is nowhere near the truth.
+    """
+
+    CONSOLE_ERROR = (
+        "Uncaught (in promise) ReferenceError: api is not defined\n"
+        "    refresh http://127.0.0.1:8420/:531\n"
+        "    <anonymous> http://127.0.0.1:8420/:695\n"
+        "    <anonymous> http://127.0.0.1:8420/:701\n"
+        "127.0.0.1:8420:531:3"
+    )
+
+    def test_a_pasted_traceback_is_refused(self) -> None:
+        key, complaint = validate_key("openrouter", self.CONSOLE_ERROR)
+        self.assertEqual("", key)
+        self.assertIn("spaces or line breaks", complaint)
+
+    def test_a_key_for_the_wrong_provider_names_the_right_one(self) -> None:
+        key, complaint = validate_key("openrouter", "sk-ant-" + "a" * 40)
+        self.assertEqual("", key)
+        self.assertIn("sk-or-", complaint)
+        self.assertIn("anthropic", complaint)
+
+    def test_a_truncated_copy_says_it_is_short(self) -> None:
+        _, complaint = validate_key("openai", "sk-abc")
+        self.assertIn("cut short", complaint)
+
+    def test_an_overlong_blob_is_refused_even_with_no_whitespace(self) -> None:
+        _, complaint = validate_key("openrouter", "sk-or-" + "x" * 400)
+        self.assertIn("longer than any key", complaint)
+
+    def test_an_empty_field_says_so_plainly(self) -> None:
+        _, complaint = validate_key("openai", "   ")
+        self.assertIn("empty", complaint)
+
+    def test_real_looking_keys_pass_and_come_back_trimmed(self) -> None:
+        for provider, raw in [
+            ("anthropic", "  sk-ant-api03-" + "A" * 40 + "  "),
+            ("openai", "sk-proj-" + "B" * 40),
+            ("openrouter", "sk-or-v1-" + "c" * 40),
+        ]:
+            with self.subTest(provider=provider):
+                key, complaint = validate_key(provider, raw)
+                self.assertEqual("", complaint)
+                self.assertEqual(raw.strip(), key)
+
+    def test_an_unknown_provider_skips_the_prefix_check(self) -> None:
+        """Structural checks still apply; a prefix we do not know cannot be asserted."""
+        key, complaint = validate_key("someone-else", "xyz-" + "d" * 40)
+        self.assertEqual("", complaint)
+        self.assertTrue(key)
