@@ -193,9 +193,11 @@ class GoogleProvider(unittest.TestCase):
     def test_google_keys_are_recognised_and_mismatches_are_named(self) -> None:
         from app.config import validate_key
 
-        key, complaint = validate_key("google", "AIza" + "x" * 35)
-        self.assertEqual("", complaint)
-        self.assertTrue(key)
+        for fmt in ("AIza" + "x" * 35, "AQ." + "x" * 35):
+            with self.subTest(fmt=fmt[:4]):
+                key, complaint = validate_key("google", fmt)
+                self.assertEqual("", complaint)
+                self.assertTrue(key)
 
         _, complaint = validate_key("openrouter", "AIza" + "x" * 35)
         self.assertIn("google", complaint)

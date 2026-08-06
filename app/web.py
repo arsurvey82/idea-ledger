@@ -24,7 +24,9 @@ from urllib.parse import parse_qs, urlparse
 
 from dataclasses import replace
 
-from .config import DEFAULT_ENV_VARS, Config, KeySource, user_dir, validate_key
+from .config import (
+    DEFAULT_ENV_VARS, Config, KeySource, key_advisory, user_dir, validate_key,
+)
 from .core.assumptions import AssumptionGraph, summarise as summarise_assumptions
 from .core.manifest import Manifest
 from .core.rules import ChangeClass, Rule, RuleTarget
@@ -291,7 +293,7 @@ class Workspace:
         if model:
             cfg = replace(cfg, model_id=model)
 
-        stored = ""
+        stored = advisory = ""
         key = str(payload.get("key", "")).strip()
         if key:
             # Checked before it reaches the store, so a stray paste is refused
@@ -300,6 +302,7 @@ class Workspace:
             key, complaint = validate_key(cfg.provider, key)
             if complaint:
                 return {"error": complaint, **self.setup()}
+            advisory = key_advisory(cfg.provider, key)
             try:
                 info = secret_store.store(self.home, cfg.key_ref.account or provider, key)
                 cfg = replace(cfg, key_ref=replace(cfg.key_ref, source=KeySource.KEYRING))
@@ -310,7 +313,7 @@ class Workspace:
 
         cfg.save(self.home)
         self.config = cfg
-        return {"ok": True, "stored": stored, **self.setup()}
+        return {"ok": True, "stored": stored, "advisory": advisory, **self.setup()}
 
     # -- connectivity ----------------------------------------------------
     def test_connection(self) -> dict[str, Any]:

@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from app.config import Config, KeySource, SetupStep, validate_key
+from app.config import Config, KeySource, SetupStep, key_advisory, validate_key
 from app.core.assumptions import (
     Assumption,
     AssumptionGraph,
@@ -261,10 +261,32 @@ class KeyValidation(unittest.TestCase):
         self.assertIn("spaces or line breaks", complaint)
 
     def test_a_key_for_the_wrong_provider_names_the_right_one(self) -> None:
+        """Refusal needs a positive match against another provider, not a miss."""
         key, complaint = validate_key("openrouter", "sk-ant-" + "a" * 40)
         self.assertEqual("", key)
-        self.assertIn("sk-or-", complaint)
         self.assertIn("anthropic", complaint)
+
+    def test_an_unrecognised_prefix_is_accepted_with_a_note(self) -> None:
+        """A stale prefix table here must never block a key the provider issued.
+
+        Google has shipped more than one key format. Hard-refusing on prefix
+        meant this file could reject a valid key outright, which is a worse
+        failure than the stray paste the check exists for. So an unknown format
+        is stored and flagged, not turned away.
+        """
+        key, complaint = validate_key("google", "AQ.Ab8" + "z" * 40)
+        self.assertEqual("", complaint)
+        self.assertTrue(key)
+
+        novel = "zz-brand-new-format-" + "q" * 30
+        key, complaint = validate_key("google", novel)
+        self.assertEqual("", complaint, "an unknown prefix must not be fatal")
+        self.assertEqual(novel, key)
+        self.assertIn("worth a glance", key_advisory("google", novel))
+
+    def test_an_expected_prefix_produces_no_note(self) -> None:
+        self.assertEqual("", key_advisory("google", "AIza" + "x" * 35))
+        self.assertEqual("", key_advisory("google", "AQ." + "x" * 35))
 
     def test_a_truncated_copy_says_it_is_short(self) -> None:
         _, complaint = validate_key("openai", "sk-abc")

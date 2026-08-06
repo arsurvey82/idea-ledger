@@ -40,13 +40,49 @@ DEFAULT_ENV_VARS: Mapping[str, str] = {
 #: console traceback was once saved as a key, and the only symptom was eight
 #: probe cards all reporting "rejected the key", which points at the account
 #: rather than at the paste. Refusing at the door names the real problem.
-KEY_PREFIXES: Mapping[str, str] = {
-    "anthropic": "sk-ant-",
-    "google": "AIza",
-    "openai": "sk-",
-    "openrouter": "sk-or-",
+#: Prefixes are *recognition*, not permission. Providers add formats without
+#: warning - Google alone has issued more than one - so a prefix this table has
+#: never seen is accepted with a note rather than refused. Refusing on an
+#: unknown prefix would mean a stale table in this file could block a perfectly
+#: valid key, which is a worse failure than the paste it was meant to catch.
+KEY_PREFIXES: Mapping[str, tuple[str, ...]] = {
+    "anthropic": ("sk-ant-",),
+    "google": ("AIza", "AQ."),
+    "openai": ("sk-",),
+    "openrouter": ("sk-or-",),
 }
 MIN_KEY_LEN, MAX_KEY_LEN = 20, 250
+
+
+def _claimed_by(key: str) -> list[str]:
+    """Providers whose known prefixes this key matches.
+
+    ``sk-`` is excluded because it prefixes almost every provider's keys and so
+    identifies nothing.
+    """
+    return [
+        provider
+        for provider, prefixes in KEY_PREFIXES.items()
+        for prefix in prefixes
+        if prefix != "sk-" and key.startswith(prefix)
+    ]
+
+
+def key_advisory(provider: str, key: str) -> str:
+    """A note about an accepted key, or "" when it looks entirely expected.
+
+    Separate from ``validate_key`` because this never blocks anything. It exists
+    so an unrecognised format is visible without being fatal.
+    """
+    known = KEY_PREFIXES.get(provider)
+    if not known or not key or any(key.startswith(p) for p in known):
+        return ""
+    return (
+        f"Saved. Note that {provider} keys usually start "
+        f"{' or '.join(repr(p) for p in known)}, and this one starts "
+        f"{key[:4]!r}. That is fine if it is what your provider issued - formats "
+        "change - but it is worth a glance if the connection test fails."
+    )
 
 
 def validate_key(provider: str, raw: str) -> tuple[str, str]:
@@ -78,16 +114,20 @@ def validate_key(provider: str, raw: str) -> tuple[str, str]:
             f"That is {len(key)} characters, far longer than any key. Something "
             "other than a key was pasted."
         )
-    want = KEY_PREFIXES.get(provider)
-    if want and not key.startswith(want):
-        other = [p for p, pre in KEY_PREFIXES.items()
-                 if p != provider and pre != "sk-" and key.startswith(pre)]
-        hint = (f" It looks like a {other[0]} key - switch the provider above, or "
-                "paste the matching one.") if other else ""
-        return "", (
-            f"A {provider} key starts '{want}', and this one starts "
-            f"'{key[:len(want)]}'.{hint}"
-        )
+    # Only a *positive* match against another provider is grounds to refuse. An
+    # unrecognised prefix is accepted, because this table cannot be trusted to
+    # be current and blocking a valid key is the worse error. The soft case is
+    # reported by key_advisory().
+    mine = KEY_PREFIXES.get(provider, ())
+    if not any(key.startswith(p) for p in mine):
+        elsewhere = [p for p in _claimed_by(key) if p != provider]
+        if elsewhere:
+            article = "an" if elsewhere[0][0] in "aeiou" else "a"
+            return "", (
+                f"That looks like {article} {elsewhere[0]} key, not "
+                f"{'an' if provider[0] in 'aeiou' else 'a'} {provider} one. "
+                "Switch the provider above, or paste the matching key."
+            )
     return key, ""
 
 

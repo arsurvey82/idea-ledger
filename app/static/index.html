@@ -570,7 +570,7 @@ const BLURB = {
            + 'Evidence gathering falls back to the demo: Gemini has search grounding, but '
            + 'this build has not verified it survives the compatibility endpoint, and an '
            + 'unverified capability is exactly what this design refuses to claim. Get a key '
-           + 'at <b>aistudio.google.com</b>; they start <code>AIza</code>.'
+           + 'at <b>aistudio.google.com</b> — whatever format it hands you is accepted.'
 };
 //: Providers where naming a specific model is worth offering. OpenRouter must
 //: name one; Google may, and defaults to gemini-2.5-flash if left blank.
@@ -653,6 +653,9 @@ $('#saveSetup').onclick = async () => {
   $('#apiKey').value = '';
   if (out.error) { $('#saveMsg').textContent = out.error; renderSetup(await api('/api/setup')); return; }
   renderSetup(out);
+  // An unrecognised key format is worth seeing but never worth blocking on.
+  if (out.advisory) $('#storeHint').innerHTML =
+    `<b>${esc(out.advisory)}</b><br>` + $('#storeHint').innerHTML;
   $('#saveMsg').textContent = (out.stored ? 'saved to ' + out.stored + ' — ' : 'saved — ') + 'testing…';
   await testConnection(true);
 };
