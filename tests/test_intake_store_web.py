@@ -498,3 +498,63 @@ class NamedKeys(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             ws = Workspace(pathlib.Path(tmp))
             self.assertIn("error", ws.use_key({"account": "nope"}))
+
+
+class RunFailureIsReported(unittest.TestCase):
+    """A provider refusing mid-run is news, not a crash."""
+
+    def test_the_command_path_prefers_the_live_evaluator(self) -> None:
+        """`run <brief>` used whatever was handed in, and /api/chat hands in the
+        demo evaluator unconditionally - so a working provider still produced
+        fictional candidates, silently, while why_demo() reported nothing wrong.
+        """
+        with TemporaryDirectory() as tmp:
+            ws = Workspace(pathlib.Path(tmp))
+            ws.bus.publish = lambda _p: None
+            sentinel = object()
+            used: list[Any] = []
+            ws.live_evaluator = lambda: sentinel
+            ws.run = lambda brief, ev: (used.append(ev), [])[1]
+            ws.chat("run wooden furniture", DemoEvaluator())
+            self.assertEqual([sentinel], used, "the demo evaluator was used anyway")
+
+    def test_a_provider_failure_is_spoken_not_raised(self) -> None:
+        """Left uncaught this returned a bare 400 and the chat stopped replying."""
+        with TemporaryDirectory() as tmp:
+            ws = Workspace(pathlib.Path(tmp))
+            said: list[dict] = []
+            ws.bus.publish = lambda p: said.append(p)
+            ws.live_evaluator = lambda: None
+
+            def boom(_brief, _ev):
+                raise RuntimeError(
+                    "anthropic returned 400: Your credit balance is too low "
+                    "to access the Anthropic API."
+                )
+
+            ws.run = boom
+            out = ws.chat("run wooden furniture", DemoEvaluator())
+
+        self.assertFalse(out["ok"])
+        spoken = " ".join(s.get("text", "") for s in said if s.get("kind") == "text")
+        self.assertIn("credit balance is too low", spoken)
+        self.assertIn("switch to another saved key", spoken, "no next action offered")
+        self.assertNotIn("RuntimeError", spoken, "the class name is noise")
+
+    def test_known_failures_carry_an_action(self) -> None:
+        from app.web import _explain_failure
+
+        cases = [
+            ("TransportUnavailable: anthropic returned 400: Your credit balance is too low",
+             "Add credit"),
+            ("ChatError: openrouter is rate-limiting this request", "Wait and retry"),
+            ("google returned 400: You exceeded your current quota", "free-tier quota"),
+        ]
+        for raw, expected in cases:
+            with self.subTest(raw=raw[:30]):
+                message, fix = _explain_failure(RuntimeError(raw))
+                self.assertIn(expected, fix)
+                self.assertFalse(
+                    message.startswith(("TransportUnavailable", "ChatError")),
+                    "the exception class should be stripped",
+                )

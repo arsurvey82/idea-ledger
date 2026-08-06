@@ -450,7 +450,21 @@ class Workspace:
                 + (f"\n\n**Using demo candidates.** {demo}" if demo else "")
             )
             tool("run_pipeline", "started", brief)
-            results = self.run(brief, evaluator)
+            try:
+                # live first, demo only as a fallback - the same choice the
+                # agent's run_pipeline tool makes. This path took whatever was
+                # handed in, and /api/chat hands in the demo evaluator
+                # unconditionally, so `run <brief>` produced fictional
+                # candidates even with a working provider, and said nothing.
+                results = self.run(brief, self.live_evaluator() or evaluator)
+            except Exception as exc:
+                # A provider refusing mid-run is a normal thing to report, not a
+                # reason to fail the whole HTTP request. Left uncaught this
+                # returned a bare 400 and the chat simply stopped responding.
+                message, fix = _explain_failure(exc)
+                tool("run_pipeline", "failed", message[:90])
+                say(f"**The run stopped.** {message}" + (f"\n\n{fix}" if fix else ""))
+                return {"ok": False, "error": message, "fix": fix}
             tool("run_pipeline", "done", f"{len(results)} candidate(s)")
             scored = [r for r in results if r["outcome"] == "scored"]
             cut = [r for r in results if r["outcome"] != "scored"]
@@ -950,6 +964,38 @@ class Workspace:
         return {"archived": str(target)}
 
 
+#: Provider failures an operator can act on, matched on the provider's own
+#: wording. The point is not classification for its own sake: each of these has
+#: a different fix, and a run that dies on one of them should say which.
+_FAILURE_HINTS: tuple[tuple[str, str], ...] = (
+    ("credit balance is too low",
+     "Add credit to that provider's account, or switch to another saved key in Setup."),
+    ("rate-limiting", "Wait and retry, or move to a paid route."),
+    ("exceeded your current quota",
+     "That is a free-tier quota, not your key. Wait for it to reset, or add billing."),
+    ("rejected the key", "Re-check the key in Setup; the connection test will confirm it."),
+    ("no route called",
+     "That model id is not available to this account. Press Save & test to re-resolve it."),
+    ("thought_signature",
+     "A tool call was replayed without its provider state. Start a new message."),
+)
+
+
+def _explain_failure(exc: BaseException) -> tuple[str, str]:
+    """(message, fix). Strips the exception class and adds the next action."""
+    raw = str(exc).strip() or type(exc).__name__
+    # Transports already phrase their errors for a person; the class name in
+    # front is the only thing making them look like a crash.
+    for prefix in ("TransportUnavailable: ", "ChatError: ", "ModelRefused: "):
+        if raw.startswith(prefix):
+            raw = raw[len(prefix):]
+    low = raw.lower()
+    for needle, fix in _FAILURE_HINTS:
+        if needle in low:
+            return raw, fix
+    return raw, ""
+
+
 def _markdown(dossier: Mapping[str, Any]) -> str:
     """The archived document, written to be read away from this app.
 
@@ -1141,7 +1187,15 @@ def make_handler(ws: Workspace, evaluator_factory: Callable[[], Any]):
                 # from "you sent nonsense".
                 return self._json({"error": str(exc), "needs_confirmation": True}, 409)
             except Exception as exc:  # surfaced to the operator, not swallowed
-                return self._json({"error": f"{type(exc).__name__}: {exc}"}, 400)
+                # A provider saying "no credit" is not a malformed request, and
+                # prefixing it with a Python class name buries the one sentence
+                # that tells you what to do. Real example this replaces:
+                #   TransportUnavailable: anthropic returned 400: Your credit
+                #   balance is too low to access the Anthropic API.
+                message, fix = _explain_failure(exc)
+                return self._json(
+                    {"error": message, "fix": fix, "kind": type(exc).__name__}, 400
+                )
 
             self._json({"error": "not found"}, 404)
 

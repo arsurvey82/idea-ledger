@@ -244,8 +244,14 @@ class ChatAgent:
                         result = fn(**args)
                         self.emit_tool(call.name, "done", _summarise(call.name, result))
                     except Exception as exc:
-                        result = {"error": f"{type(exc).__name__}: {exc}"}
-                        self.emit_tool(call.name, "failed", str(exc)[:90])
+                        # The model reads this and relays it, so it has to be a
+                        # sentence rather than a class name. "no credit" needs
+                        # to reach the operator as "no credit".
+                        from .web import _explain_failure
+
+                        message, fix = _explain_failure(exc)
+                        result = {"error": message, "fix": fix}
+                        self.emit_tool(call.name, "failed", message[:90])
                 self.history.append(
                     {
                         "role": "tool",
