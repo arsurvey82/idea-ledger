@@ -22,11 +22,15 @@ negotiation included, must run with nothing installed.
 from __future__ import annotations
 
 import json
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from typing import Any, Mapping
 
 from .base import Capability, Completion, ModelSpec
 
+API_URL = "https://api.anthropic.com/v1/messages"
+API_VERSION = "2023-06-01"
 MODEL_ID = "claude-opus-5"
 WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search"}
 
@@ -45,6 +49,7 @@ class AnthropicTransport:
     model_id: str = MODEL_ID
     effort: str = "high"
     max_tokens: int = MAX_TOKENS_UNSTREAMED
+    timeout: int = 180
     _client: Any = None
 
     name: str = "anthropic"
@@ -84,7 +89,7 @@ class AnthropicTransport:
             system=system, prompt=prompt, schema=schema, search=search,
             cache_prefix=cache_prefix,
         )
-        response = self._messages().create(**request)
+        response = self._send(request)
         return self.parse(response, expects_json=schema is not None)
 
     # -- request construction (pure; tested without a client) -------------
@@ -172,6 +177,46 @@ class AnthropicTransport:
         )
 
     # -- internals -------------------------------------------------------
+    def _send(self, request: Mapping[str, Any]) -> Any:
+        """Post the request over urllib, like every other provider here.
+
+        This deliberately does not use the SDK even when one is installed.
+        Preferring it failed immediately on this machine - ``Messages.create()
+        got an unexpected keyword argument 'output_config'`` - because the
+        installed version predates the field. The wire format is stable and
+        versioned by a header; an SDK pinned by whatever happens to be in the
+        environment is not. Going straight to HTTP also keeps the promise that
+        this app needs nothing installed.
+        """
+        req = urllib.request.Request(
+            API_URL,
+            data=json.dumps(dict(request)).encode("utf-8"),
+            headers={
+                "x-api-key": self.api_key,
+                "anthropic-version": API_VERSION,
+                "content-type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                payload = json.loads(resp.read().decode("utf-8", "replace"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")
+            try:
+                detail = (json.loads(detail).get("error") or {}).get("message", detail)
+            except json.JSONDecodeError:
+                pass
+            raise TransportUnavailable(
+                f"anthropic returned {exc.code}: {detail[:300]}"
+            ) from None
+        except urllib.error.URLError as exc:
+            raise TransportUnavailable(f"could not reach anthropic: {exc.reason}") from None
+        # parse() reads the response with getattr, because it was written
+        # against the SDK's objects. Wrapping keeps that one tested function
+        # serving both paths instead of growing a second copy.
+        return _Attr(payload)
+
     def _messages(self) -> Any:
         if self._client is None:
             if not self.api_key:
@@ -203,3 +248,36 @@ def _urls_from_search(block: Any) -> list[str]:
         if isinstance(url, str) and url.startswith(("http://", "https://")):
             found.append(url)
     return found
+
+
+def _sdk_available() -> bool:
+    try:
+        import anthropic  # noqa: F401
+    except ModuleNotFoundError:
+        return False
+    return True
+
+
+class _Attr:
+    """Attribute access over a decoded JSON body.
+
+    ``parse`` was written against the SDK's response objects and reads
+    everything through ``getattr``. Rather than fork it for the urllib path,
+    the body is wrapped so both paths hand it the same shape.
+    """
+
+    __slots__ = ("_d",)
+
+    def __init__(self, data: Any) -> None:
+        self._d = data if isinstance(data, dict) else {}
+
+    def __getattr__(self, name: str) -> Any:
+        value = self._d.get(name)
+        if isinstance(value, dict):
+            return _Attr(value)
+        if isinstance(value, list):
+            return [_Attr(v) if isinstance(v, dict) else v for v in value]
+        return value
+
+    def __repr__(self) -> str:   # pragma: no cover - debugging aid
+        return f"_Attr({sorted(self._d)})"

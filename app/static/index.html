@@ -773,10 +773,24 @@ async function loadLogs() {
 /* ---------- boot ---------- */
 (async () => {
   await refresh(); await loadSetup();
-  say(`I keep your idea ledger and I do not guess.
-Two things are true right now: **${STATE.rules.length} rule(s) are loaded**, and \
-${SETUP.has_key ? 'a key is configured.' : '**no key is configured**, so runs use a labelled demo evaluator — the pipeline is real, the candidates are fictional.'}
-${SETUP.has_key ? 'Ask me anything in your own words — I read the ledger with tools rather than guessing.' : 'Type `run <something>`, `rules`, or `help`.'}`);
+  // Say what this is, whether the next run will be real, and give one concrete
+  // thing to type. Listing verbs at someone who has not seen the app before is
+  // what made it feel like a command line with a chat bubble on top.
+  const demo = SETUP.demo_reason;
+  say([
+    `I evaluate business ideas against **your** rules and keep the scores honest`
+    + ` as facts change. ${STATE.rules.length} rule(s) and`
+    + ` ${Object.keys(STATE.facts || {}).length} facts are loaded — both yours to edit`
+    + ` on the right.`,
+    demo ? `**Runs will use demo candidates.** ${demo}`
+         : `**Runs are live.** Candidates are generated and checked against real,`
+           + ` cited competitors.`,
+    `Talk to me normally. For example:`,
+    `> lets look at custom wooden furniture\n`
+    + `> why was that one rejected?\n`
+    + `> add a rule rejecting anything over $5k of capital\n`
+    + `> how does the scoring actually work?`,
+  ].join('\n\n'));
   if (!SETUP.has_key) showTab('setup');
 })();
 </script>

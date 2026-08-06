@@ -39,7 +39,11 @@ idea, a score, or a fact — read it.
 - If the operator asks for something this build cannot do, say so plainly and say \
 what it can do instead. Do not pretend.
 - When a run rejects candidates, say which rule rejected them and note that it \
-happened in code, before any model judged the idea."""
+happened in code, before any model judged the idea.
+- If run_pipeline returns a demo_reason, lead with it. Those candidates are \
+fictional; reporting them as findings would be the worst thing you could do here. \
+Say plainly that they are demo data, give the reason verbatim, and only then \
+describe what the run showed about the machinery."""
 
 
 TOOLS: list[dict[str, Any]] = [

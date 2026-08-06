@@ -166,19 +166,30 @@ class Calibration(unittest.TestCase):
 
 
 class Configuration(unittest.TestCase):
+    """Every test here pins ``home``.
+
+    Left unset it resolves to the real user directory and reads the machine's
+    actual keyring, so the result depends on what the person running the tests
+    happens to have saved. Two of these passed for months and began failing the
+    moment a real Anthropic key was stored - they were never testing what they
+    claimed.
+    """
+
     def test_setup_walks_the_operator_forward(self) -> None:
         env: dict[str, str] = {}
-        cfg = Config()
-        self.assertIs(cfg.next_step(env), SetupStep.CHOOSE_PROVIDER)
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            cfg = Config()
+            self.assertIs(cfg.next_step(env, home), SetupStep.CHOOSE_PROVIDER)
 
-        cfg = cfg.with_provider("anthropic")
-        self.assertIs(cfg.next_step(env), SetupStep.SUPPLY_KEY)
+            cfg = cfg.with_provider("anthropic")
+            self.assertIs(cfg.next_step(env, home), SetupStep.SUPPLY_KEY)
 
-        env["ANTHROPIC_API_KEY"] = "sk-test-value-1234"
-        self.assertIs(cfg.next_step(env), SetupStep.EDIT_FACT_BASE)
+            env["ANTHROPIC_API_KEY"] = "sk-test-value-1234"
+            self.assertIs(cfg.next_step(env, home), SetupStep.EDIT_FACT_BASE)
 
-        cfg = dataclasses.replace(cfg, fact_base_edited=True)
-        self.assertIs(cfg.next_step(env), SetupStep.READY)
+            cfg = dataclasses.replace(cfg, fact_base_edited=True)
+            self.assertIs(cfg.next_step(env, home), SetupStep.READY)
 
     def test_openrouter_asks_for_the_key_before_the_route(self) -> None:
         """Order matters: a route cannot be looked up without a key.
@@ -209,7 +220,8 @@ class Configuration(unittest.TestCase):
         self.assertIn("ending ...abcd", text)
 
     def test_a_missing_key_explains_how_to_supply_one(self) -> None:
-        text = Config().with_provider("anthropic").describe({})
+        with TemporaryDirectory() as tmp:
+            text = Config().with_provider("anthropic").describe({}, Path(tmp))
         self.assertIn("ANTHROPIC_API_KEY", text)
         self.assertIn("export", text)
         self.assertIn("$env:", text)

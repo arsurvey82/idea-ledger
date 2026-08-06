@@ -71,6 +71,10 @@ THRESHOLDS = (Threshold("ease", 7), Threshold("solo_marketing", 7))
 #: model is resolved from the key on save instead; see _AUTO_MODEL.
 DEFAULT_ROUTE = {"openrouter": "openrouter/free", "openai": "gpt-4o-mini"}
 
+#: Anthropic's default, kept beside the others rather than imported at module
+#: scope so the transport stays lazily loaded.
+ANTHROPIC_MODEL = "claude-opus-5"
+
 
 class Broadcaster:
     """Fan out stage events to every open SSE connection."""
@@ -280,6 +284,9 @@ class Workspace:
             "key_complaint": key_complaint,
             "saved_keys": [k.as_dict() for k in secret_store.saved(self.home)],
             "active_account": self.config.key_ref.account,
+            # Empty when runs will be real. The page needs this to say so up
+            # front rather than after someone has read three fictional results.
+            "demo_reason": self.why_demo(),
             "provider": self.config.provider,
             "model_id": self.config.model_id,
             "providers": sorted(REGISTRY),
@@ -437,11 +444,10 @@ class Workspace:
 
         if low.startswith(("run", "evaluate")):
             brief = text.split(" ", 1)[1].strip() if " " in text else "an idea"
-            has_key = self.config.key(home=self.home) is not None
+            demo = self.why_demo()
             say(
                 f"Evaluating candidates for **{brief}**."
-                + ("" if has_key else " No key is configured, so this uses the labelled "
-                   "demo evaluator - the pipeline is real, the candidates are fictional.")
+                + (f"\n\n**Using demo candidates.** {demo}" if demo else "")
             )
             tool("run_pipeline", "started", brief)
             results = self.run(brief, evaluator)
@@ -563,9 +569,14 @@ class Workspace:
         agent = ChatAgent(
             client=client,
             tools={
+                # why_demo() rides along so the model can tell the operator the
+                # cause instead of reporting fictional names as findings. It is
+                # the difference between "3 candidates" and "3 fictional
+                # candidates, because this provider cannot search".
                 "run_pipeline": lambda brief="an idea": {
                     "results": self.run(brief, self.live_evaluator() or evaluator),
                     "evaluator": "model" if self.live_evaluator() else "demo (fictional)",
+                    "demo_reason": self.why_demo(),
                 },
                 "list_rules": lambda: {"rules": self.state()["rules"]},
                 "read_facts": lambda: {"facts": dict(self.facts().fields)},
@@ -766,6 +777,30 @@ class Workspace:
         return out
 
     # -- actions ---------------------------------------------------------
+    def why_demo(self) -> str:
+        """Why this run will use fictional candidates, in one sentence.
+
+        Empty when it will not. Labelling rows "demo-" said *that* it was demo
+        and never *why*, which reads as a bug when your key is valid and your
+        connection test is green. The cause is almost never the key.
+        """
+        if self.live_evaluator() is not None:
+            return ""
+        provider = self.config.provider or "no provider"
+        if not self.config.key(home=self.home):
+            return ("No key is saved, so there is nothing to ask. The pipeline is "
+                    "real; the candidates are fictional and labelled demo-.")
+        if provider not in _COMPAT and provider != "anthropic":
+            return (f"{provider} has no evaluator in this build, so candidates are "
+                    "fictional and labelled demo-.")
+        return (
+            f"{provider} cannot search the web here, and the evidence stage needs "
+            "citable competitors. Rather than let a model invent them, the run uses "
+            "fictional candidates labelled demo-. Everything else is real: your gates "
+            "ran in code, and the score was computed, not guessed. For real "
+            "candidates, use a provider that can search - Anthropic can."
+        )
+
     def live_evaluator(self) -> Any | None:
         """A model-backed evaluator, when the provider can actually do the job.
 
@@ -774,18 +809,35 @@ class Workspace:
         competitors is worse than an obviously-labelled demo.
         """
         key = self.config.key(home=self.home)
-        if not key or self.config.provider not in _COMPAT:
+        if not key:
             return None
         from .evaluator import ModelEvaluator
         from .providers.base import Capability
-        from .providers.compat_adapter import CompatProvider
 
-        backend = CompatProvider(
-            provider=self.config.provider,
-            api_key=key,
-            model=self.config.model_id or DEFAULT_ROUTE.get(self.config.provider, ""),
-            on_retry=self.log,
-        )
+        backend: Any
+        if self.config.provider == "anthropic":
+            # Anthropic does not speak the OpenAI dialect, so it has its own
+            # transport - which existed, declared every capability the pipeline
+            # wants, and was wired to nothing. A valid Anthropic key therefore
+            # produced demo output: the one provider that can run every stage
+            # was the only one that could not reach this function.
+            from .providers.anthropic_transport import AnthropicTransport
+
+            backend = AnthropicTransport(
+                api_key=key, model_id=self.config.model_id or ANTHROPIC_MODEL,
+            )
+        elif self.config.provider in _COMPAT:
+            from .providers.compat_adapter import CompatProvider
+
+            backend = CompatProvider(
+                provider=self.config.provider,
+                api_key=key,
+                model=self.config.model_id or DEFAULT_ROUTE.get(self.config.provider, ""),
+                on_retry=self.log,
+            )
+        else:
+            return None
+
         if Capability.SERVER_SEARCH not in backend.capabilities():
             return None
         return ModelEvaluator(
