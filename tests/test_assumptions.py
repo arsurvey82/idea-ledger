@@ -180,9 +180,26 @@ class Configuration(unittest.TestCase):
         cfg = dataclasses.replace(cfg, fact_base_edited=True)
         self.assertIs(cfg.next_step(env), SetupStep.READY)
 
-    def test_openrouter_must_name_its_route_first(self) -> None:
-        cfg = Config().with_provider("openrouter")
-        self.assertIs(cfg.next_step({}), SetupStep.NAME_ROUTE)
+    def test_openrouter_asks_for_the_key_before_the_route(self) -> None:
+        """Order matters: a route cannot be looked up without a key.
+
+        Listing a broker's usable routes is an authenticated call, so asking for
+        the route first asks for something the operator has no way to answer.
+
+        ``home`` is pinned to an empty directory deliberately. Left unset it
+        resolves to the real user directory, and this assertion then depends on
+        whether the machine running the tests happens to have a key stored.
+        """
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            cfg = Config().with_provider("openrouter")
+            self.assertIs(cfg.next_step({}, home), SetupStep.SUPPLY_KEY)
+
+            env = {"OPENROUTER_API_KEY": "sk-or-test-value"}
+            self.assertIs(cfg.next_step(env, home), SetupStep.NAME_ROUTE)
+
+            routed = dataclasses.replace(cfg, model_id="a/b:free")
+            self.assertIs(routed.next_step(env, home), SetupStep.EDIT_FACT_BASE)
 
     def test_the_key_is_never_returned_in_a_description(self) -> None:
         secret = "sk-super-secret-abcd"

@@ -289,8 +289,25 @@ class WebApi(unittest.TestCase):
 
     def test_setup_reports_capabilities_without_a_key(self) -> None:
         setup = self.get("/api/setup")
-        self.assertIn("next step", setup["config"])
+        self.assertIn("next step", setup["config_text"])
         self.assertIn("evidence", setup["negotiation"])
+        self.assertFalse(setup["has_key"])
+        self.assertIn("anthropic", setup["providers"])
+
+    def test_choosing_a_provider_is_persisted_without_a_key(self) -> None:
+        out = self.post("/api/setup", {"provider": "anthropic"})
+        self.assertEqual(out["provider"], "anthropic")
+        self.assertEqual(out["env_var"], "ANTHROPIC_API_KEY")
+        self.assertEqual(out["next_step"], "supply_key")
+
+    def test_an_unknown_provider_is_refused(self) -> None:
+        self.assertIn("error", self.post("/api/setup", {"provider": "nope"}))
+
+    def test_the_config_file_never_contains_the_key(self) -> None:
+        self.post("/api/setup", {"provider": "anthropic"})
+        raw = (Path(self._tmp.name) / "config.json").read_text(encoding="utf-8")
+        self.assertIn("ANTHROPIC_API_KEY", raw)   # the variable name
+        self.assertNotIn("sk-", raw)              # never a value
 
     def test_a_demo_run_persists_outcomes_and_causes(self) -> None:
         results = self.post("/api/run", {"brief": "energy compliance"})["results"]

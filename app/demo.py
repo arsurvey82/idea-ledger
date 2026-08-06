@@ -52,13 +52,24 @@ _SCORES = {
 
 @dataclass(slots=True)
 class DemoEvaluator:
-    """Returns fixed, obviously-fictional results. No network, no key."""
+    """Returns fixed, obviously-fictional results. No network, no key.
+
+    Candidate ids carry a per-run suffix. Without it the second demo run trips
+    the reject-list guard and every candidate returns "already rejected", which
+    is correct behaviour that reads exactly like a broken demo.
+    """
 
     thin_evidence_for: str = "demo-thin"
+    run: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.run:
+            self.run = f"{_counter():02d}"
 
     def propose(self, brief: str, count: int, prior: str) -> Sequence[Candidate]:
         return [
-            Candidate(id=cid, name=name, track="service", rationale=why, fields=fields)
+            Candidate(id=f"{cid}-{self.run}", name=name, track="service",
+                      rationale=why, fields=fields)
             for cid, name, why, fields in _CANDIDATES[:count]
         ]
 
@@ -85,7 +96,7 @@ class DemoEvaluator:
         self, candidate: Candidate, evidence: Sequence[Evidence]
     ) -> Sequence[DimensionScore]:
         values = _SCORES.get(
-            candidate.id,
+            candidate.id.rsplit("-", 1)[0],
             dict(demand=7, competition=4, ease=6, capital=7, profit=6, solo_marketing=7),
         )
         return tuple(
@@ -104,6 +115,14 @@ class DemoEvaluator:
 
     def render(self, idea: Idea, scored: object) -> str:
         return f"{idea.name} - demo narrative, no model was called."
+
+
+_RUNS = [0]
+
+
+def _counter() -> int:
+    _RUNS[0] += 1
+    return _RUNS[0]
 
 
 def demo_evaluator() -> DemoEvaluator:

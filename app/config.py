@@ -64,17 +64,40 @@ def user_dir(env: Mapping[str, str] | None = None) -> Path:
 
 @dataclass(frozen=True, slots=True)
 class KeyRef:
-    """A pointer to a key. Never the key."""
+    """A pointer to a key. Never the key.
+
+    Resolution order is environment first, then the OS secret store. Env wins so
+    a shell variable can override a stored key for one session without anyone
+    having to delete anything.
+    """
 
     source: KeySource = KeySource.ENVIRONMENT
     env_var: str = ""
+    account: str = ""   # the record's name in the OS store; never the secret
 
-    def resolve(self, env: Mapping[str, str] | None = None) -> str | None:
-        if self.source is not KeySource.ENVIRONMENT:
-            return None  # keyring transport lands with the provider adapters
+    def resolve(
+        self, env: Mapping[str, str] | None = None, home: "Path | None" = None
+    ) -> str | None:
         env = os.environ if env is None else env
-        value = env.get(self.env_var, "").strip()
-        return value or None
+        if self.env_var:
+            value = env.get(self.env_var, "").strip()
+            if value:
+                return value
+        if self.account:
+            from . import secrets as secret_store
+
+            return secret_store.fetch(home or user_dir(env), self.account)
+        return None
+
+    def found_in(
+        self, env: Mapping[str, str] | None = None, home: "Path | None" = None
+    ) -> KeySource:
+        env = os.environ if env is None else env
+        if self.env_var and env.get(self.env_var, "").strip():
+            return KeySource.ENVIRONMENT
+        if self.resolve(env, home):
+            return KeySource.KEYRING
+        return KeySource.ABSENT
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +122,7 @@ class Config:
             key_ref=KeyRef(
                 source=KeySource(key.get("source", KeySource.ENVIRONMENT.value)),
                 env_var=key.get("env_var", ""),
+                account=key.get("account", ""),
             ),
             search_compensator=raw.get("search_compensator", ""),
             fact_base_edited=bool(raw.get("fact_base_edited", False)),
@@ -111,7 +135,11 @@ class Config:
         payload = {
             "provider": self.provider,
             "model_id": self.model_id,
-            "key_ref": {"source": self.key_ref.source.value, "env_var": self.key_ref.env_var},
+            "key_ref": {
+                "source": self.key_ref.source.value,
+                "env_var": self.key_ref.env_var,
+                "account": self.key_ref.account,   # a record name, never a secret
+            },
             "search_compensator": self.search_compensator,
             "fact_base_edited": self.fact_base_edited,
         }
@@ -120,41 +148,60 @@ class Config:
 
     # -- key handling ----------------------------------------------------
     def with_provider(self, provider: str) -> "Config":
-        """Selecting a provider pre-fills that provider's usual variable."""
-        env_var = self.key_ref.env_var or DEFAULT_ENV_VARS.get(provider, "")
+        """Selecting a provider switches to that provider's usual variable.
+
+        This must *replace* the previous provider's variable, not fall back to
+        it. Keeping the old one is why switching to OpenRouter still reported
+        ANTHROPIC_API_KEY, and why the key never appeared to resolve.
+        """
+        env_var = DEFAULT_ENV_VARS.get(provider, self.key_ref.env_var)
         return replace(
-            self, provider=provider, key_ref=replace(self.key_ref, env_var=env_var)
+            self,
+            provider=provider,
+            key_ref=replace(self.key_ref, env_var=env_var, account=provider),
         )
 
-    def key(self, env: Mapping[str, str] | None = None) -> str | None:
-        return self.key_ref.resolve(env)
+    def key(self, env: Mapping[str, str] | None = None, home: Path | None = None) -> str | None:
+        return self.key_ref.resolve(env, home)
 
-    def key_status(self, env: Mapping[str, str] | None = None) -> tuple[KeySource, str]:
+    def key_status(
+        self, env: Mapping[str, str] | None = None, home: Path | None = None
+    ) -> tuple[KeySource, str]:
         """(source, human description). The key itself is never in the result."""
-        value = self.key_ref.resolve(env)
+        value = self.key_ref.resolve(env, home)
         if value is None:
             var = self.key_ref.env_var or "(not chosen)"
-            return KeySource.ABSENT, f"no key found; expected environment variable {var}"
-        return (
-            self.key_ref.source,
-            f"found in {self.key_ref.env_var}, ending {_tail(value)}",
+            return KeySource.ABSENT, f"no key stored, and {var} is not set in this shell"
+        source = self.key_ref.found_in(env, home)
+        where = (
+            f"environment variable {self.key_ref.env_var}"
+            if source is KeySource.ENVIRONMENT
+            else "your operating system's secret store"
         )
+        return source, f"found in {where}, ending {_tail(value)}"
 
     # -- first-run state machine -----------------------------------------
-    def next_step(self, env: Mapping[str, str] | None = None) -> SetupStep:
+    def next_step(
+        self, env: Mapping[str, str] | None = None, home: Path | None = None
+    ) -> SetupStep:
         if not self.provider:
             return SetupStep.CHOOSE_PROVIDER
+        # The key comes before the route, not after. Listing a broker's usable
+        # routes requires an authenticated call, so asking for a route first
+        # asks for something the operator has no way to look up yet.
+        if self.key(env, home) is None:
+            return SetupStep.SUPPLY_KEY
         if self.provider == "openrouter" and not self.model_id:
             return SetupStep.NAME_ROUTE
-        if self.key(env) is None:
-            return SetupStep.SUPPLY_KEY
         if not self.fact_base_edited:
             return SetupStep.EDIT_FACT_BASE
         return SetupStep.READY
 
-    def describe(self, env: Mapping[str, str] | None = None) -> str:
+    def describe(
+        self, env: Mapping[str, str] | None = None, home: Path | None = None
+    ) -> str:
         """The setup screen's status block. Safe to show on screen or paste."""
-        source, detail = self.key_status(env)
+        source, detail = self.key_status(env, home)
         lines = [
             f"provider   {self.provider or '(not chosen)'}",
             f"model      {self.model_id or '(provider default)'}",
@@ -162,7 +209,7 @@ class Config:
         ]
         if self.search_compensator:
             lines.append(f"search     supplied by {self.search_compensator}")
-        lines.append(f"next step  {self.next_step(env).value}")
+        lines.append(f"next step  {self.next_step(env, home).value}")
         if source is KeySource.ABSENT and self.key_ref.env_var:
             lines += [
                 "",

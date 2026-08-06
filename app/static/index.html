@@ -6,323 +6,510 @@
 <title>Idea Ledger</title>
 <style>
 :root{
-  --bg:#0E1316; --bg-2:#141B1F; --glass:rgba(255,255,255,.045); --glass-line:rgba(255,255,255,.10);
+  --bg:#0E1316; --bg-2:#141B1F; --bg-3:#101619;
+  --glass:rgba(255,255,255,.045); --line:rgba(255,255,255,.10);
   --scrim:#141B1F; --ink:#DFE5E3; --dim:#8A9499; --rule:#232C31;
-  --oxide:#D4634E;
-  --ok:#5FA98C; --warn:#D9A441; --stop:#C4574A; --hold:#7E8FA8; --info:#5E93A8;
+  --oxide:#D4634E; --ok:#5FA98C; --warn:#D9A441; --stop:#C4574A; --hold:#7E8FA8; --info:#5E93A8;
   --mono:ui-monospace,"Cascadia Mono","SF Mono",Menlo,Consolas,monospace;
   --sans:Optima,Candara,"Gill Sans MT","Segoe UI",system-ui,sans-serif;
 }
 :root[data-theme="light"]{
-  --bg:#E9EAE5; --bg-2:#F3F4F0; --glass:rgba(255,255,255,.55); --glass-line:rgba(20,25,27,.10);
+  --bg:#E9EAE5; --bg-2:#F3F4F0; --bg-3:#E2E4DE;
+  --glass:rgba(255,255,255,.55); --line:rgba(20,25,27,.10);
   --scrim:#F3F4F0; --ink:#14191B; --dim:#5F686C; --rule:#CDCFC8;
-  --oxide:#A63D2C;
-  --ok:#3F7A5E; --warn:#96702A; --stop:#A6392E; --hold:#4F6076; --info:#3A6B7E;
+  --oxide:#A63D2C; --ok:#3F7A5E; --warn:#96702A; --stop:#A6392E; --hold:#4F6076; --info:#3A6B7E;
 }
 *{box-sizing:border-box}
-body{margin:0;height:100vh;overflow:hidden;background:var(--bg);color:var(--ink);
+html,body{height:100%}
+body{margin:0;overflow:hidden;background:var(--bg);color:var(--ink);
   font-family:var(--sans);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
 button,input,textarea,select{font:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--oxide);outline-offset:2px}
-@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
-
-/* three panes */
-.shell{display:grid;grid-template-columns:190px minmax(0,1fr) 430px;height:100vh}
-@media (max-width:1100px){.shell{grid-template-columns:64px minmax(0,1fr) 380px}.rail b{display:none}}
-@media (max-width:820px){.shell{grid-template-columns:minmax(0,1fr)}.rail,.side{display:none}}
-
-/* rail */
-.rail{border-right:1px solid var(--rule);padding:20px 14px;display:flex;flex-direction:column;gap:4px;background:var(--bg-2)}
-.brand{font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--oxide);margin-bottom:18px}
-.rail button{display:flex;gap:10px;align-items:center;width:100%;background:none;border:0;
-  padding:8px 10px;border-radius:3px;cursor:pointer;text-align:left;color:var(--dim);font-size:14px}
-.rail button:hover{background:var(--glass);color:var(--ink)}
-.rail button[aria-current="true"]{color:var(--ink);background:var(--glass);box-shadow:inset 2px 0 0 var(--oxide)}
-.rail .spacer{flex:1}
-.rail .foot{font-family:var(--mono);font-size:10px;color:var(--dim);letter-spacing:.08em}
-
-/* workspace */
-main{overflow-y:auto;padding:26px 30px}
-h1{font-family:var(--mono);font-size:12px;letter-spacing:.2em;text-transform:uppercase;
-  color:var(--oxide);font-weight:600;margin:0 0 4px}
-h2{font-size:24px;font-weight:600;margin:0 0 18px;letter-spacing:-.01em}
-h3{font-family:var(--mono);font-size:11px;letter-spacing:.15em;text-transform:uppercase;
-  color:var(--dim);margin:26px 0 10px;font-weight:600}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 .hide{display:none!important}
-
-.card{background:var(--glass);border:1px solid var(--glass-line);border-radius:6px;
-  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);padding:16px 18px;margin-bottom:16px}
-/* text sits on an opaque scrim so contrast is computed against a known value,
-   never against whatever happens to be behind the glass */
-.card .body{background:var(--scrim);border-radius:4px;padding:12px 14px}
-
-table{width:100%;border-collapse:collapse;font-size:14px}
-th{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
-  color:var(--dim);text-align:left;padding:0 12px 8px 0;border-bottom:1px solid var(--rule);font-weight:600}
-td{padding:9px 12px 9px 0;border-bottom:1px solid var(--rule);vertical-align:middle}
-tbody tr{cursor:pointer}
-tbody tr:hover{background:var(--glass)}
+.muted{color:var(--dim);font-size:13px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+/* ---------- shell: chat left, panels right ---------- */
+.shell{display:grid;grid-template-columns:minmax(0,1fr) 470px;height:100vh}
+@media (max-width:1080px){.shell{grid-template-columns:minmax(0,1fr) 380px}}
+@media (max-width:800px){.shell{grid-template-columns:minmax(0,1fr)} .side{display:none}}
+/* ---------- chat ---------- */
+.chat{display:flex;flex-direction:column;min-width:0;background:var(--bg)}
+.chat header{display:flex;gap:10px;align-items:center;flex-wrap:nowrap;min-width:0;
+  padding:12px 20px;border-bottom:1px solid var(--rule)}
+.chat header>.btn{flex:0 0 auto}
+.brand{font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--oxide);white-space:nowrap;flex:0 0 auto}
+.chat header .grow{flex:1}
+/* Each indicator is a chip, not loose text, so two of them side by side read as
+   two things. white-space:nowrap keeps a two-word label ("key verified",
+   "reconnecting") on one line instead of wrapping under its own dot. */
+.status{display:inline-flex;gap:7px;align-items:center;flex:0 0 auto;white-space:nowrap;
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--dim);padding:4px 9px;border:1px solid var(--rule);border-radius:999px}
+/* flex:0 0 7px, not width alone: as a flex child the dot is shrinkable by
+   default and squashes to an ellipse when the bar gets tight. */
+.led{flex:0 0 7px;width:7px;height:7px;border-radius:50%;background:var(--dim)}
+.led.on{background:var(--ok)} .led.off{background:var(--stop)} .led.busy{background:var(--oxide);animation:pulse 1.1s infinite}
+@keyframes pulse{0%,100%{opacity:.25}50%{opacity:1}}
+.log{flex:1;min-height:0;overflow-y:auto;padding:26px 22px;scroll-behavior:smooth}
+/* centred reading column; the composer below matches its width exactly */
+.log .col{max-width:820px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+.turn{max-width:100%}
+.turn.me{align-self:flex-end;background:var(--glass);border:1px solid var(--line);
+  border-radius:10px 10px 2px 10px;padding:9px 14px}
+.turn.them{align-self:flex-start;display:flex;gap:12px}
+.turn.them .av{width:24px;height:24px;border-radius:4px;border:1px solid var(--oxide);
+  color:var(--oxide);display:grid;place-items:center;font-family:var(--mono);font-size:11px;flex:none;margin-top:2px}
+.turn.them .said{min-width:0;flex:1}
+/* pre-wrap belongs to the prose only. On the whole bubble it leaks into the
+   tool cards nested inside and renders their markup newlines as line breaks. */
+.turn.them .said>.stream{white-space:pre-wrap;display:block}
+.turn.them .said b{color:var(--ink)}
+/* tool call card — the agentic affordance */
+.tool{border:1px solid var(--rule);border-radius:6px;background:var(--bg-3);margin:8px 0;overflow:hidden}
+.tool>summary{list-style:none;cursor:pointer;padding:8px 12px;display:flex;gap:10px;align-items:center}
+.tool>summary::-webkit-details-marker{display:none}
+.tool .nm{font-family:var(--mono);font-size:12px}
+.tool .grow{flex:1}
+.tool .st{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+.tool.done .st{color:var(--ok)} .tool.failed .st{color:var(--stop)}
+.tool .steps{padding:2px 12px 10px;border-top:1px solid var(--rule)}
+.step{display:grid;grid-template-columns:18px 1fr auto auto;gap:9px;align-items:baseline;padding:5px 0}
+.step+.step{border-top:1px dotted var(--rule)}
+.step .gl{font-family:var(--mono);color:var(--dim);text-align:center}
+.step .lb{font-size:13px}
+.step .kd{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--dim);border:1px solid var(--rule);border-radius:2px;padding:0 5px}
+.step .kd.model{color:var(--oxide);border-color:var(--oxide);border-style:dashed}
+.step .el{font-family:var(--mono);font-size:10.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+.step .dt{grid-column:2/-1;font-size:12px;color:var(--dim)}
+.step.passed .lb{color:var(--ok)}
+.step.rejected .lb,.step.exhausted .lb{color:var(--stop)}
+.said .mdh{font-size:14px;font-weight:600;margin:14px 0 6px;color:var(--ink)}
+.said ul,.said ol{margin:6px 0;padding-left:22px}
+.said li{margin:3px 0}
+.said code{font-family:var(--mono);font-size:.88em;background:var(--glass);
+  border:1px solid var(--line);border-radius:3px;padding:0 4px}
+.said pre.code{font-family:var(--mono);font-size:12px;background:var(--bg-3);
+  border:1px solid var(--rule);border-radius:5px;padding:11px 13px;overflow-x:auto;margin:8px 0}
+.said>.stream:empty{display:none}
+.think{border-left:2px solid var(--rule);margin:4px 0 10px;padding:2px 0 2px 12px}
+.think>summary{list-style:none;cursor:pointer;font-family:var(--mono);font-size:10px;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+.think>summary::-webkit-details-marker{display:none}
+.think .body{white-space:pre-wrap;color:var(--dim);font-size:12.5px;margin-top:6px;
+  max-height:220px;overflow-y:auto}
+.who{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin-bottom:3px}
+.composer{border-top:1px solid var(--rule);padding:14px 22px;background:var(--bg-2);flex:none}
+.composer .col{max-width:820px;margin:0 auto}
+.composer .box{display:flex;gap:10px;align-items:flex-end}
+.composer textarea{flex:1;background:var(--bg);border:1px solid var(--rule);border-radius:8px;
+  padding:11px 13px;resize:none;min-height:46px;max-height:160px;font-family:var(--sans)}
+.sugg{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px}
+.sugg button{background:none;border:1px solid var(--rule);color:var(--dim);border-radius:99px;
+  padding:3px 11px;font-size:12px;cursor:pointer;font-family:var(--mono)}
+.sugg button:hover{border-color:var(--oxide);color:var(--oxide)}
+/* ---------- side panels ---------- */
+.side{border-left:1px solid var(--rule);background:var(--bg-2);display:flex;flex-direction:column;overflow:hidden}
+.tabs{display:flex;border-bottom:1px solid var(--rule);overflow-x:auto}
+.tabs button{background:none;border:0;border-bottom:2px solid transparent;color:var(--dim);
+  padding:12px 14px;cursor:pointer;font-family:var(--mono);font-size:11px;letter-spacing:.12em;
+  text-transform:uppercase;white-space:nowrap}
+.tabs button[aria-selected="true"]{color:var(--oxide);border-bottom-color:var(--oxide)}
+.pane{flex:1;min-height:0;overflow-y:auto;padding:18px 20px}
+.side footer{border-top:1px solid var(--rule);padding:11px 20px;display:flex;gap:8px;flex-wrap:wrap}
+h3{font-family:var(--mono);font-size:10.5px;letter-spacing:.15em;text-transform:uppercase;
+  color:var(--dim);margin:20px 0 9px;font-weight:600}
+h3:first-child{margin-top:0}
+pre{font-family:var(--mono);font-size:12px;line-height:1.6;white-space:pre-wrap;margin:0;color:var(--ink)}
+.btn{background:var(--glass);border:1px solid var(--line);color:var(--ink);
+  padding:8px 14px;border-radius:4px;cursor:pointer;font-size:13px}
+.btn:hover{border-color:var(--oxide)} .btn.primary{border-color:var(--oxide);color:var(--oxide)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+input[type=text],input[type=password],textarea,select{width:100%;background:var(--bg);
+  border:1px solid var(--rule);border-radius:4px;padding:9px 11px;font-size:14px}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{font-family:var(--mono);font-size:9.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--dim);
+  text-align:left;padding:0 10px 7px 0;border-bottom:1px solid var(--rule);font-weight:600}
+td{padding:8px 10px 8px 0;border-bottom:1px solid var(--rule)}
+tbody tr{cursor:pointer} tbody tr:hover{background:var(--glass)}
 tbody tr[aria-selected="true"]{box-shadow:inset 2px 0 0 var(--oxide)}
 .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
-
-.pill{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.1em;
-  text-transform:uppercase;padding:2px 7px;border-radius:2px;border:1px solid currentColor}
+.pill{display:inline-block;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
+  text-transform:uppercase;padding:2px 6px;border-radius:2px;border:1px solid currentColor}
 .s-active{color:var(--ok)} .s-blocked{color:var(--warn)} .s-rejected{color:var(--stop)}
 .s-on_hold{color:var(--hold)} .s-under_researched{color:var(--oxide);border-style:dashed}
-.p-overridden{color:var(--info);border-style:dashed}
-.p-seeded{color:var(--dim)} .p-derived{color:var(--dim);border-color:transparent;opacity:.6}
-
-.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
-.chip{background:none;border:1px solid var(--rule);color:var(--dim);border-radius:99px;
-  padding:3px 12px;font-size:12px;cursor:pointer}
-.chip[aria-pressed="true"]{border-color:var(--oxide);color:var(--oxide)}
-
-.btn{background:var(--glass);border:1px solid var(--glass-line);color:var(--ink);
-  padding:8px 14px;border-radius:4px;cursor:pointer;font-size:13px}
-.btn:hover{border-color:var(--oxide)}
-.btn.primary{border-color:var(--oxide);color:var(--oxide)}
-.btn:disabled{opacity:.4;cursor:not-allowed}
-.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-input[type=text],textarea{width:100%;background:var(--bg);border:1px solid var(--rule);
-  border-radius:4px;padding:9px 11px;font-size:14px}
-textarea{min-height:74px;resize:vertical;font-family:var(--sans)}
-pre{font-family:var(--mono);font-size:12px;line-height:1.6;white-space:pre-wrap;margin:0;color:var(--ink)}
-.muted{color:var(--dim);font-size:13px}
-
-/* live stream */
-.stream{font-family:var(--mono);font-size:11.5px;max-height:190px;overflow-y:auto}
-.stream div{padding:2px 0;color:var(--dim)}
-.stream b{color:var(--ink);font-weight:600}
-.stream .rejected,.stream .exhausted{color:var(--stop)}
-.stream .passed{color:var(--ok)}
-
-/* output panel */
-.side{border-left:1px solid var(--rule);background:var(--bg-2);display:flex;flex-direction:column;overflow:hidden}
-.side header{padding:18px 20px 0}
-.side .scroll{flex:1;overflow-y:auto;padding:0 20px 18px}
-.side footer{border-top:1px solid var(--rule);padding:12px 20px;display:flex;gap:8px;flex-wrap:wrap}
-.dim-row{display:grid;grid-template-columns:1fr 34px;gap:8px;align-items:baseline;
+.p-overridden{color:var(--info);border-style:dashed} .p-seeded{color:var(--dim)}
+.state{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:5px;
+  border:1px solid var(--rule);margin-bottom:16px;font-size:13.5px}
+.state.good{border-color:var(--ok)} .state.bad{border-color:var(--oxide)}
+.state .hd{font-weight:600;display:block;margin-bottom:2px}
+.opts{display:grid;grid-template-columns:1fr;gap:8px;margin-bottom:14px}
+.opt{border:1px solid var(--rule);border-radius:5px;padding:11px 13px;cursor:pointer;background:none;text-align:left}
+.opt:hover{border-color:var(--oxide)}
+.opt[aria-pressed="true"]{border-color:var(--oxide);background:var(--glass)}
+.opt b{display:block;margin-bottom:2px} .opt span{color:var(--dim);font-size:12px;line-height:1.45}
+.field{display:flex;flex-direction:column;gap:5px;margin-bottom:13px}
+.field label{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+.field .hint{color:var(--dim);font-size:12.5px}
+.dim-row{display:grid;grid-template-columns:1fr 32px;gap:8px;align-items:baseline;
   padding:9px 0;border-bottom:1px solid var(--rule)}
-.dim-row .name{font-size:14px}
 .dim-row .val{font-family:var(--mono);text-align:right;font-variant-numeric:tabular-nums}
 .dim-row .fals{grid-column:1/-1;color:var(--dim);font-size:12.5px;margin-top:2px}
 .bar{height:3px;background:var(--rule);border-radius:2px;overflow:hidden;grid-column:1/-1;margin-top:4px}
 .bar i{display:block;height:100%;background:var(--oxide)}
-.total{font-family:var(--mono);font-size:30px;font-variant-numeric:tabular-nums}
+.total{font-family:var(--mono);font-size:28px;font-variant-numeric:tabular-nums}
+.logs{font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+.logs div{padding:1px 0}
 </style>
 </head>
 <body>
 <div class="shell">
-
-  <nav class="rail">
-    <div class="brand">Idea Ledger</div>
-    <button data-view="ideas" aria-current="true">&#9636; <b>Ideas</b></button>
-    <button data-view="rules">&#9635; <b>Rules</b></button>
-    <button data-view="facts">&#9633; <b>Facts</b></button>
-    <button data-view="setup">&#9881; <b>Setup</b></button>
-    <button data-view="help">? <b>Help</b></button>
-    <div class="spacer"></div>
-    <button id="theme" class="foot">theme</button>
-    <div class="foot" id="conn">connecting</div>
-  </nav>
-
-  <main>
-    <!-- IDEAS -->
-    <section id="v-ideas">
-      <h1>Ledger</h1><h2>Ideas</h2>
-      <div class="chips" id="filters"></div>
-      <div class="card"><div class="body">
-        <table><thead><tr>
-          <th>Idea</th><th>Track</th><th>Status</th><th>Score</th><th>Prov.</th>
-        </tr></thead><tbody id="ideas"></tbody></table>
-        <p class="muted" id="empty">No ideas yet. Run the demo below to see the pipeline work.</p>
-      </div></div>
-
-      <h3>Run</h3>
-      <div class="card"><div class="body">
-        <div class="row">
-          <input type="text" id="brief" value="energy compliance services" style="flex:1;min-width:200px">
-          <button class="btn primary" id="run">Run</button>
-        </div>
-        <p class="muted" style="margin:10px 0 0">
-          With no key configured this runs a labelled demo evaluator &mdash; no model
-          is called and every result is fictional.
-        </p>
-      </div></div>
-
-      <h3>Live stages</h3>
-      <div class="card"><div class="body stream" id="stream">
-        <div>waiting&hellip;</div>
-      </div></div>
-
-      <h3>Rejections</h3>
-      <div class="card"><div class="body"><pre id="rejections">none yet</pre></div></div>
-    </section>
-
-    <!-- RULES -->
-    <section id="v-rules" class="hide">
-      <h1>Orchestration</h1><h2>Rules</h2>
-      <div class="card"><div class="body">
-        <p class="muted" style="margin-top:0">
-          Describe a rule in plain language. It is triaged to a predicate or a prompt
-          fragment, placed against the manifest, and dry-run before anything changes.
-        </p>
-        <textarea id="ruleText" placeholder="e.g. reject anything needing more than 20,000 dollars of capital"></textarea>
-        <div class="row" style="margin-top:10px">
-          <select id="ruleTarget">
-            <option value="symbolic">symbolic &mdash; decidable from fields</option>
-            <option value="neural">neural &mdash; needs judgement</option>
-          </select>
-          <input type="text" id="ruleField" placeholder="field, e.g. capital_required_usd" style="flex:1;min-width:180px">
-          <select id="ruleOp">
-            <option>lte</option><option>gte</option><option>lt</option><option>gt</option>
-            <option>eq</option><option>ne</option><option>falsy</option><option>truthy</option>
-          </select>
-          <input type="text" id="ruleValue" placeholder="value" style="width:110px">
-          <button class="btn" id="previewRule">Preview</button>
-        </div>
-        <p class="muted" style="margin-bottom:0">
-          The structured inputs stand in for the model compile step, which lands with a
-          configured provider. Triage, placement, dry-run and confirmation are already live.
-        </p>
-      </div></div>
-      <div class="card hide" id="previewCard"><div class="body">
-        <pre id="previewOut"></pre>
-        <div class="row" style="margin-top:12px">
-          <button class="btn primary" id="activateRule">Activate</button>
-          <label class="muted"><input type="checkbox" id="breakingOk"> confirm breaking change</label>
-        </div>
-      </div></div>
-      <h3>Active rules</h3>
-      <div class="card"><div class="body"><pre id="rules">none</pre></div></div>
-    </section>
-
-    <!-- FACTS -->
-    <section id="v-facts" class="hide">
-      <h1>Operator</h1><h2>Facts</h2>
-      <div class="card"><div class="body"><pre id="facts"></pre></div></div>
-      <h3>Load-bearing assumptions</h3>
-      <div class="card"><div class="body"><pre id="assumptions"></pre></div></div>
-      <h3>Calibration</h3>
-      <div class="card"><div class="body"><pre id="calibration"></pre></div></div>
-    </section>
-
-    <!-- SETUP -->
-    <section id="v-setup" class="hide">
-      <h1>Configuration</h1><h2>Setup</h2>
-      <div class="card"><div class="body"><pre id="setup"></pre></div></div>
-      <h3>Provider capabilities</h3>
-      <div class="card"><div class="body"><pre id="negotiation"></pre></div></div>
-      <h3>Pipeline manifest</h3>
-      <div class="card"><div class="body"><pre id="manifest"></pre></div></div>
-    </section>
-
-    <!-- HELP -->
-    <section id="v-help" class="hide">
-      <h1>Reference</h1><h2>Help</h2>
-      <div class="card"><div class="body">
-        <h3 style="margin-top:0">What this is</h3>
-        <p>A ledger that keeps scores honest as facts change. It proposes ideas, but its
-        real job is revision.</p>
-        <h3>Provenance</h3>
-        <p>Every number is <b>derived</b> (computed from evidence), <b>overridden</b>
-        (you edited it; the original is kept), or <b>seeded</b> (imported, no evidence).
-        Overrides are excluded from calibration &mdash; counting your corrections as model
-        error would make the system measure you instead of it.</p>
-        <h3>Tracks</h3>
-        <p>Scores rank within a track only. A physical-goods idea and a service idea are
-        not on one scale, so the system refuses to sort them together.</p>
-        <h3>Under-researched</h3>
-        <p>Not a low score &mdash; a terminal state. If too few citable competitors were
-        found, the idea is not scored at all rather than scored on thin evidence.</p>
-        <h3>Breaking changes</h3>
-        <p>Adding, removing or redefining a dimension means every stored score stops
-        being comparable to every future one, and the missing evidence cannot honestly
-        be backfilled. The ledger versions rather than pretends.</p>
-        <h3>Your data</h3>
-        <p>Facts, ideas and evidence live outside this repository and are never
-        committed. The framework ships; your profile does not.</p>
-      </div></div>
-    </section>
-  </main>
-
-  <!-- OUTPUT PANEL -->
-  <aside class="side">
+  <!-- ======================= CHAT ======================= -->
+  <div class="chat">
     <header>
-      <h1>Output</h1>
-      <h2 id="dName" style="font-size:19px;margin-bottom:6px">Nothing selected</h2>
+      <span class="brand">Idea Ledger</span>
+      <span class="grow"></span>
+      <!-- Dot and word are named apart on purpose. The previous pair differed
+           only by word order (ledBus / busLed), and the two got swapped: the
+           dot received the text and the word received class="led", collapsing
+           the label into an 8px circle that overflowed across the toolbar. -->
+      <span class="status"><i class="led" id="keyDot"></i><span id="keyWord">no key</span></span>
+      <span class="status"><i class="led" id="busDot"></i><span id="busWord">connecting</span></span>
+      <button class="btn" id="theme" style="padding:4px 10px;font-size:12px">theme</button>
+    </header>
+    <div class="log" id="log"><div class="col" id="logCol"></div></div>
+    <div class="composer">
+      <div class="col">
+        <div class="sugg" id="sugg"></div>
+        <div class="box">
+          <textarea id="msg" rows="1" placeholder="Ask anything — or describe a rule you want"></textarea>
+          <button class="btn primary" id="send">Send</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- ======================= SIDE ======================= -->
+  <aside class="side">
+    <div class="tabs" id="tabs">
+      <button data-t="output" aria-selected="true">Output</button>
+      <button data-t="ideas">Ideas</button>
+      <button data-t="rules">Rules</button>
+      <button data-t="facts">Facts</button>
+      <button data-t="setup">Setup</button>
+      <button data-t="logs">Logs</button>
+    </div>
+    <div class="pane" id="p-output">
+      <h3>Selected idea</h3>
+      <h2 id="dName" style="font-size:18px;margin:0 0 6px">Nothing selected</h2>
       <div class="row" style="gap:6px;margin-bottom:10px">
         <span class="pill" id="dStatus" hidden></span>
         <span class="pill p-overridden" id="dOver" hidden>contains override</span>
       </div>
       <div class="total" id="dTotal"></div>
-    </header>
-    <div class="scroll">
       <div id="dDims"></div>
-      <p class="muted" id="dHint">Select an idea to see its dimensions, evidence and falsifiers.</p>
+      <p class="muted" id="dHint">Run an evaluation, then pick an idea from the Ideas tab.</p>
+    </div>
+    <div class="pane hide" id="p-ideas">
+      <h3>Ledger</h3>
+      <table><thead><tr><th>Idea</th><th>Status</th><th>Score</th></tr></thead>
+        <tbody id="ideas"></tbody></table>
+      <p class="muted" id="noIdeas">Nothing yet. Ask the chat to <code>run</code> something.</p>
+      <h3>Rejections</h3><pre id="rejections">none yet</pre>
+    </div>
+    <div class="pane hide" id="p-rules">
+      <h3>Loaded rules</h3>
+      <div id="rulesList"></div>
+      <h3>Add a rule</h3>
+      <div class="field">
+        <label>description</label>
+        <input type="text" id="ruleText" placeholder="capital must fit my ceiling">
+      </div>
+      <div class="row" style="margin-bottom:10px">
+        <select id="ruleTarget" style="width:auto">
+          <option value="symbolic">symbolic</option><option value="neural">neural</option>
+        </select>
+        <input type="text" id="ruleField" placeholder="field" style="flex:1;min-width:120px">
+        <select id="ruleOp" style="width:auto">
+          <option>lte</option><option>gte</option><option>lt</option><option>gt</option>
+          <option>eq</option><option>ne</option><option>falsy</option><option>truthy</option>
+        </select>
+        <input type="text" id="ruleValue" placeholder="value" style="width:90px">
+        <button class="btn" id="previewRule">Preview</button>
+      </div>
+      <pre id="previewOut" class="hide"></pre>
+      <div class="row hide" id="activateRow" style="margin-top:10px">
+        <button class="btn primary" id="activateRule">Activate</button>
+        <label class="muted"><input type="checkbox" id="breakingOk" style="width:auto"> confirm breaking</label>
+      </div>
+      <h3>Pipeline manifest</h3><pre id="manifest"></pre>
+    </div>
+    <div class="pane hide" id="p-facts">
+      <h3>Your facts</h3><pre id="facts"></pre>
+      <h3>Load-bearing assumptions</h3><pre id="assumptions"></pre>
+      <h3>Calibration</h3><pre id="calibration"></pre>
+    </div>
+    <div class="pane hide" id="p-setup">
+      <div class="state" id="keyState"><i class="led" id="stLed"></i><span id="keyText"><span class="hd">Reading your settings</span>If this does not
+        change in a second, the page is stale — reload with Ctrl+Shift+R.</span></div>
+      <div class="field">
+        <label>1 · who runs the model</label>
+        <div class="hint">This is where your requests go. The key below must belong to
+          whichever one you pick here.</div>
+      </div>
+      <select id="provider">
+        <option value="">Choose a provider…</option>
+        <option value="anthropic">Anthropic — Claude</option>
+        <option value="openai">OpenAI — GPT</option>
+        <option value="openrouter">OpenRouter — broker, many models</option>
+      </select>
+      <div class="hint" id="providerNote" style="margin:6px 0 14px"></div>
+      <div class="field">
+        <label id="keyLabel">2 · api key</label>
+        <input type="password" id="apiKey" placeholder="paste your key" autocomplete="off" spellcheck="false">
+        <div class="hint" id="storeHint"></div>
+      </div>
+      <div class="row">
+        <button class="btn primary" id="saveSetup">Save &amp; test</button>
+        <button class="btn" id="testConn">Test connection</button>
+        <button class="btn" id="forgetKey">Forget key</button>
+      </div>
+      <p class="muted" id="saveMsg" style="margin-top:8px"></p>
+      <!-- Route comes last on purpose. Listing a broker's usable routes is an
+           authenticated call, so this whole block is dead weight until step 2
+           has produced a key. -->
+      <div class="field hide" id="routeField" style="margin-top:16px">
+        <label>3 · route</label>
+        <input type="text" id="modelId" list="modelList" placeholder="openrouter/free">
+        <datalist id="modelList"></datalist>
+        <div class="row" style="margin-top:4px">
+          <button class="btn" id="loadModels">Load routes</button>
+          <button class="btn primary" id="findRoute">Find one that works</button>
+        </div>
+        <div class="hint" id="routeHint"></div>
+      </div>
+      <p class="muted" id="routeMsg" style="margin-top:8px"></p>
+      <h3>Capabilities for this provider</h3><pre id="negotiation"></pre>
+      <h3>Where things live</h3><pre id="setupText"></pre>
+    </div>
+    <div class="pane hide" id="p-logs">
+      <h3>Server log</h3><div class="logs" id="logs"></div>
     </div>
     <footer>
       <button class="btn" id="export" disabled>Export</button>
       <button class="btn" id="archive" disabled>Archive</button>
-      <button class="btn" id="editScore" disabled>Edit</button>
+      <button class="btn" id="editScore" disabled>Edit score</button>
     </footer>
   </aside>
 </div>
-
 <script>
 const $ = s => document.querySelector(s);
-const api = async (p, body) => (await fetch(p, body ? {
-  method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
-} : {})).json();
-
-let STATE = {ideas:[]}, SELECTED = null, FILTER = 'all', PENDING = null;
-
-/* views */
-document.querySelectorAll('.rail button[data-view]').forEach(b => b.onclick = () => {
-  document.querySelectorAll('.rail button[data-view]').forEach(x => x.setAttribute('aria-current', x === b));
-  document.querySelectorAll('main section').forEach(s => s.classList.add('hide'));
-  $('#v-' + b.dataset.view).classList.remove('hide');
+function atBottom() {
+  const l = $('#log');
+  return l.scrollHeight - l.scrollTop - l.clientHeight < 90;
+}
+let STICK = true;
+function follow() { if (STICK) follow(); }
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+/* A small, deliberately limited markdown renderer. Escaping happens first, so
+   model output can never inject markup; only the constructs below are revived.
+   The code-block placeholder is a printable sentinel: an earlier version used a
+   NUL byte, which is legal in a Python string and fatal in a JavaScript file. */
+function md(src) {
+  var t = esc(String(src == null ? '' : src));
+  var blocks = [];
+  t = t.replace(/```([\s\S]*?)```/g, function (_m, code) {
+    blocks.push('<pre class="code">' + code.replace(/^\n/, '') + '</pre>');
+    return '⁣CODE' + (blocks.length - 1) + '⁣';
+  });
+  t = t.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  t = t.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+  var out = [];
+  var list = null;
+  function close() { if (list) { out.push('</' + list + '>'); list = null; } }
+  t.split('\n').forEach(function (raw) {
+    var line = raw.replace(/\s+$/, '');
+    var h = line.match(/^(#{1,3})\s+(.*)$/);
+    var li = line.match(/^\s*[-*]\s+(.*)$/);
+    var oli = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (h) { close(); out.push('<h4 class="mdh">' + h[2] + '</h4>'); }
+    else if (li) { if (list !== 'ul') { close(); out.push('<ul>'); list = 'ul'; } out.push('<li>' + li[1] + '</li>'); }
+    else if (oli) { if (list !== 'ol') { close(); out.push('<ol>'); list = 'ol'; } out.push('<li>' + oli[1] + '</li>'); }
+    else if (!line.trim()) { close(); out.push(''); }
+    else { close(); out.push(line); }
+  });
+  close();
+  t = out.join('\n').replace(/\n{3,}/g, '\n\n');
+  return t.replace(/⁣CODE(\d+)⁣/g, function (_m, i) { return blocks[+i]; });
+}
+let STATE = {ideas:[], rules:[]}, SETUP = {}, SELECTED = null, TOOL = null, BUSY = false;
+/* ---------- tabs ---------- */
+$('#tabs').querySelectorAll('button').forEach(b => b.onclick = () => {
+  $('#tabs').querySelectorAll('button').forEach(x => x.setAttribute('aria-selected', x === b));
+  document.querySelectorAll('.pane').forEach(p => p.classList.add('hide'));
+  $('#p-' + b.dataset.t).classList.remove('hide');
+  if (b.dataset.t === 'logs') loadLogs();
 });
-
-/* theme — the toggle must win over the OS preference in both directions */
+const showTab = t => $(`#tabs button[data-t="${t}"]`).click();
+/* theme — the button names the theme it switches *to*, so it is a verb rather
+   than a label sitting next to two status chips that are also just labels. */
+function setTheme(n) {
+  document.documentElement.dataset.theme = n;
+  $('#theme').textContent = n === 'dark' ? 'light mode' : 'dark mode';
+  $('#theme').title = 'Switch to ' + (n === 'dark' ? 'light' : 'dark');
+}
 $('#theme').onclick = () => {
-  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-  document.documentElement.dataset.theme = next;
-  localStorage.setItem('theme', next);
+  const n = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  setTheme(n); localStorage.setItem('theme', n);
 };
-document.documentElement.dataset.theme =
-  localStorage.getItem('theme') ||
-  (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
-
-/* rendering */
+setTheme(localStorage.getItem('theme') ||
+  (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'));
+/* ---------- chat ---------- */
+function bubble(role, html) {
+  const d = document.createElement('div');
+  if (role === 'me') { d.className = 'turn me'; d.innerHTML = html; }
+  else { d.className = 'turn them';
+         d.innerHTML = `<div class="av">IL</div><div class="said">${html}</div>`; }
+  $('#logCol').appendChild(d); follow();
+  return d;
+}
+function say(text) {
+  // Reuse the turn already opened for this message. Without this an error or
+  // note arrives as a second avatar under an empty first bubble.
+  if (TURN && !TURN.text) { finalText(text); return; }
+  bubble('them', md(text));
+}
+const STAGE_GLYPH = {hydrate:'▢', gate:'▣', evidence:'◈', refute:'⊘', score:'▦', render:'✎'};
+const STAGE_LABEL = {hydrate:'Load ledger', gate:'Apply constraints',
+  evidence:'Search for competitors', refute:'Try to refute',
+  score:'Compute score', render:'Write dossier'};
+/* One assistant turn owns everything the agent emits until it answers:
+   streamed text, tool cards, and the pipeline stages nested inside them.
+   Without this, cards attach to whatever bubble happened to be last. */
+let TURN = null;
+function beginTurn() {
+  const d = document.createElement('div');
+  d.className = 'turn them';
+  d.innerHTML = `<div class="av">IL</div><div class="said"><span class="stream"></span></div>`;
+  $('#logCol').appendChild(d); follow();
+  return TURN = {el: d, said: d.querySelector('.said'), stream: d.querySelector('.stream'), text: ''};
+}
+function turn() { return TURN || beginTurn(); }
+function think(t) {
+  const T = turn();
+  if (!T.think) {
+    const d = document.createElement('details');
+    d.className = 'think';
+    d.innerHTML = `<summary>thinking</summary><div class="body"></div>`;
+    T.said.insertBefore(d, T.stream);
+    T.think = d.querySelector('.body'); T.thinkEl = d; T.thought = '';
+  }
+  T.thought += t; T.think.textContent = T.thought;
+  T.think.scrollTop = T.think.scrollHeight;
+  follow();
+}
+function delta(t) {
+  const T = turn(); T.text += t;
+  T.stream.innerHTML = md(T.text);
+  follow();
+}
+function finalText(t) {
+  const T = turn();
+  if (!T.text) T.stream.innerHTML = md(t);   // provider sent no deltas
+  TURN = null;
+}
+function toolCard(name, detail) {
+  const d = document.createElement('details');
+  d.className = 'tool'; d.open = true;
+  d.innerHTML = `<summary><i class="led busy"></i><span class="nm">${esc(name)}</span>
+    <span class="grow muted" style="font-size:12px">${esc(detail || '')}</span>
+    <span class="st">running</span></summary><div class="steps"></div>`;
+  turn().said.appendChild(d);
+  follow();
+  return d;
+}
+function endTool(card, state, detail) {
+  if (!card) return;
+  card.classList.add(state === 'failed' ? 'failed' : 'done');
+  card.querySelector('.led').classList.remove('busy');
+  card.querySelector('.led').classList.add(state === 'failed' ? 'off' : 'on');
+  card.querySelector('.st').textContent = state;
+  if (detail) card.querySelector('.grow').textContent = detail;
+}
+function stageRow(card, m) {
+  if (!card) return;
+  const steps = card.querySelector('.steps');
+  const id = `${m.candidate}::${m.stage}`;
+  let r = steps.querySelector(`[data-k="${CSS.escape(id)}"]`);
+  if (!r) { r = document.createElement('div'); r.dataset.k = id; steps.appendChild(r); }
+  r.className = 'step ' + m.state;
+  r.innerHTML = `<div class="gl">${STAGE_GLYPH[m.stage] || '·'}</div>
+    <div class="lb">${esc(m.candidate)} · ${esc(STAGE_LABEL[m.stage] || m.stage)}</div>
+    <div class="kd ${m.kind}">${m.kind === 'model' ? 'model' : 'code'}</div>
+    <div class="el">${m.t != null ? m.t.toFixed(2) + 's' : ''}</div>
+    ${m.detail ? `<div class="dt">${esc(m.detail)}</div>` : ''}`;
+  follow();
+}
+async function send(text) {
+  if (!text.trim() || BUSY) return;
+  BUSY = true; $('#send').disabled = true;
+  bubble('me', esc(text));
+  $('#msg').value = '';
+  TURN = null; beginTurn();
+  try { await api('/api/chat', {message: text}); await refresh(); }
+  catch (e) { say('The request failed: ' + e); }
+  finally { BUSY = false; $('#send').disabled = false; $('#msg').focus(); }
+}
+$('#log').addEventListener('scroll', () => { STICK = atBottom(); });
+$('#send').onclick = () => send($('#msg').value);
+/* the composer grows with the message, up to a limit, then scrolls itself */
+$('#msg').addEventListener('input', e => {
+  e.target.style.height = 'auto';
+  e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px';
+});
+$('#msg').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send($('#msg').value); } };
+const SUGGESTIONS = ['run energy compliance services', 'rules', 'facts', 'test', 'status', 'help'];
+$('#sugg').innerHTML = SUGGESTIONS.map(s => `<button>${esc(s)}</button>`).join('');
+$('#sugg').querySelectorAll('button').forEach(b => b.onclick = () => send(b.textContent));
+/* ---------- live bus ---------- */
+const es = new EventSource('/api/events');
+es.onopen = () => { $('#busWord').textContent = 'live'; $('#busDot').className = 'led on'; };
+es.onerror = () => { $('#busWord').textContent = 'reconnecting'; $('#busDot').className = 'led off'; };
+es.onmessage = e => {
+  const m = JSON.parse(e.data);
+  if (m.type === 'chat') {
+    if (m.kind === 'reasoning') think(m.text);
+    else if (m.kind === 'delta') delta(m.text);
+    else if (m.kind === 'text') { m.final ? finalText(m.text) : say(m.text); }
+    else if (m.state === 'started') TOOL = toolCard(m.tool, m.detail);
+    else { endTool(TOOL, m.state, m.detail); TOOL = null; }
+  } else if (m.type === 'stage') { stageRow(TOOL, m); }
+  else if (m.type === 'log') { pushLog(m.line); }
+};
+/* ---------- side rendering ---------- */
 function renderIdeas() {
-  const rows = STATE.ideas.filter(i => FILTER === 'all' || i.status === FILTER);
-  $('#empty').style.display = STATE.ideas.length ? 'none' : 'block';
-  $('#ideas').innerHTML = rows.map(i => `
+  $('#noIdeas').style.display = STATE.ideas.length ? 'none' : 'block';
+  $('#ideas').innerHTML = STATE.ideas.map(i => `
     <tr data-id="${i.id}" aria-selected="${SELECTED === i.id}">
-      <td>${esc(i.name)}</td>
-      <td class="muted">${esc(i.track)}</td>
+      <td>${esc(i.name)}<div class="muted">${esc(i.track)}</div></td>
       <td><span class="pill s-${i.status}">${i.status.replace(/_/g,' ')}</span></td>
-      <td class="num">${i.total == null ? '&mdash;' : i.total + '/' + i.max}</td>
-      <td>${i.overridden ? '<span class="pill p-overridden">edited</span>' : ''}</td>
+      <td class="num">${i.total == null ? '—' : i.total + '/' + i.max}</td>
     </tr>`).join('');
   $('#ideas').querySelectorAll('tr').forEach(tr => tr.onclick = () => select(tr.dataset.id));
-
-  const counts = {all: STATE.ideas.length};
-  STATE.ideas.forEach(i => counts[i.status] = (counts[i.status] || 0) + 1);
-  $('#filters').innerHTML = Object.entries(counts).map(([k, n]) =>
-    `<button class="chip" data-f="${k}" aria-pressed="${FILTER === k}">${k.replace(/_/g,' ')} ${n}</button>`
-  ).join('');
-  $('#filters').querySelectorAll('.chip').forEach(c => c.onclick = () => {
-    FILTER = c.dataset.f; renderIdeas();
-  });
 }
-
+function renderRules() {
+  $('#rulesList').innerHTML = STATE.rules.length ? STATE.rules.map(r => `
+    <div class="dim-row" style="grid-template-columns:1fr auto">
+      <div><b>${esc(r.id)}</b> <span class="pill ${r.active ? 's-active' : 'p-seeded'}">${r.active ? 'on' : 'off'}</span>
+        <div class="muted">${esc(r.description)}</div></div>
+      <div class="muted" style="font-family:var(--mono);font-size:11px">${esc(r.stage)}/${esc(r.target)}<br>${esc(r.author)}</div>
+    </div>`).join('') : '<p class="muted">No rules loaded.</p>';
+}
 async function select(id) {
-  SELECTED = id; renderIdeas();
+  SELECTED = id; renderIdeas(); showTab('output');
   const d = await api('/api/idea?id=' + encodeURIComponent(id));
-  $('#dName').textContent = d.name || id;
-  $('#dHint').style.display = 'none';
+  $('#dName').textContent = d.name || id; $('#dHint').style.display = 'none';
   const st = $('#dStatus'); st.hidden = false;
   st.textContent = (d.status || '').replace(/_/g,' '); st.className = 'pill s-' + d.status;
   $('#dTotal').innerHTML = d.total == null ? '<span class="muted" style="font-size:14px">not scored</span>'
@@ -330,101 +517,187 @@ async function select(id) {
   $('#dOver').hidden = !(d.dimensions || []).some(x => x.provenance === 'overridden');
   $('#dDims').innerHTML = (d.dimensions || []).map(x => `
     <div class="dim-row">
-      <div class="name">${esc(x.dimension)}
+      <div>${esc(x.dimension)}
         ${x.provenance !== 'derived' ? `<span class="pill p-${x.provenance}">${x.provenance}</span>` : ''}
-        ${x.original != null ? `<span class="muted"> was ${x.original}</span>` : ''}
-      </div>
+        ${x.original != null ? `<span class="muted"> was ${x.original}</span>` : ''}</div>
       <div class="val">${x.value}</div>
-      <div class="bar"><i style="width:${x.value * 10}%"></i></div>
+      <div class="bar"><i style="width:${x.value*10}%"></i></div>
       <div class="fals">${esc(x.falsifier || 'no falsifier recorded')}
-        <span class="muted">&middot; confidence ${x.confidence} &middot; ${x.evidence.length} source(s)</span></div>
+        <span class="muted"> · confidence ${x.confidence} · ${x.evidence.length} source(s)</span></div>
     </div>`).join('');
-  ['export','archive','editScore'].forEach(b => $('#' + b).disabled = false);
+  ['export','archive','editScore'].forEach(b => $('#'+b).disabled = false);
 }
-
-function renderAll() {
-  renderIdeas();
+async function refresh() {
+  STATE = await api('/api/state');
+  renderIdeas(); renderRules();
   $('#facts').textContent = JSON.stringify(STATE.facts, null, 2);
   $('#assumptions').textContent = STATE.assumptions;
   $('#calibration').textContent = STATE.calibration;
   $('#manifest').textContent = STATE.manifest;
-  $('#rules').textContent = STATE.rules.length
-    ? STATE.rules.map(r => `${r.active ? '[on ]' : '[off]'} ${r.id}  ${r.stage}/${r.target}  ${r.description}`).join('\n')
-    : 'none';
   $('#rejections').textContent = STATE.rejections.length
-    ? STATE.rejections.map(r => `${r.idea_id}  ${r.outcome}\n    ${r.cause}`).join('\n')
-    : 'none yet';
+    ? STATE.rejections.map(r => `${r.idea_id}  ${r.outcome}\n    ${r.cause}`).join('\n') : 'none yet';
 }
-
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const refresh = async () => { STATE = await api('/api/state'); renderAll(); };
-
-/* actions */
-$('#run').onclick = async () => {
-  $('#run').disabled = true; $('#stream').innerHTML = '';
-  try { await api('/api/run', {brief: $('#brief').value}); await refresh(); }
-  finally { $('#run').disabled = false; }
+/* ---------- setup ---------- */
+const BLURB = {
+  anthropic: 'Claude, direct. Search and schema enforcement are both supported, so every '
+           + 'pipeline stage can run. Keys start <code>sk-ant-</code>.',
+  openai:    "GPT, direct. Chat and rules work. This build cannot reach OpenAI's search, so "
+           + 'evidence gathering falls back to the labelled demo. Keys start <code>sk-</code>.',
+  openrouter:'A broker in front of many models, including free ones. Capabilities belong to '
+           + 'the <b>route</b>, not to OpenRouter — so a third step appears once your key '
+           + 'is saved, because listing routes needs it. Keys start <code>sk-or-</code>.'
 };
-
+function renderSetup(s) {
+  SETUP = s;
+  // The options live in the document, so a failed fetch cannot leave this empty.
+  $('#provider').value = s.provider || '';
+  pickProvider(s.provider || '', s.model_id);
+  const ok = s.has_key, verified = s.verified;
+  $('#keyState').className = 'state ' + (ok ? 'good' : 'bad');
+  $('#stLed').className = 'led ' + (verified ? 'on' : ok ? 'busy' : 'off');
+  $('#keyText').innerHTML = ok
+    ? `<span class="hd">${verified ? 'Connected' : 'Key found, not yet tested'}</span>
+       ${esc(s.key_detail)}. <span class="muted">Next: ${esc((s.next_step||'').replace(/_/g,' '))}</span>`
+    : `<span class="hd">No key yet</span>${esc(s.key_detail)}.`;
+  $('#storeHint').innerHTML = s.store_available
+    ? `Saved with <b>${esc(s.store_backend)}</b> — ${esc(s.store_detail)}. Never written to
+       this repository or the config file. It protects the key from other accounts on this
+       machine; it cannot protect it from software already running as you.`
+    : `<b>No OS secret store here</b> (${esc(s.store_detail)}). Saving is refused rather than
+       writing plain text — set the environment variable <code>${esc(s.env_var)}</code> instead.`;
+  $('#apiKey').disabled = !s.store_available;
+  $('#negotiation').textContent = s.negotiation;
+  $('#setupText').textContent = s.config_text + '\n\nledger     ' + s.home;
+  $('#keyWord').textContent = verified ? 'key verified' : ok ? 'key untested' : 'no key';
+  $('#keyDot').className = 'led ' + (verified ? 'on' : ok ? 'busy' : 'off');
+}
+function pickProvider(p, model) {
+  const isRouter = p === 'openrouter';
+  $('#routeField').classList.toggle('hide', !isRouter);
+  if (model !== undefined) $('#modelId').value = model || '';
+  $('#providerNote').innerHTML = BLURB[p] || 'Pick one to see what it can do here.';
+  if (!isRouter) return;
+  // Both route controls make an authenticated call to *this* provider. A key
+  // saved for a different provider does not unlock them, so arm on the pair.
+  const armed = !!(SETUP.has_key && SETUP.provider === p);
+  $('#loadModels').disabled = $('#findRoute').disabled = !armed;
+  $('#routeHint').innerHTML = armed
+    ? `OpenRouter forwards to whichever model you name, so capabilities belong to the
+       route rather than to the gateway. <b>Find one that works</b> places a real call
+       against each candidate, because a route can be listed, be free, and still be
+       refused by your account. Left blank, <b>openrouter/free</b> is used.`
+    : `<b>Save an OpenRouter key in step 2 first.</b> Listing routes is an authenticated
+       call, so there is nothing here to look up until a key exists. Left blank,
+       <b>openrouter/free</b> is used.`;
+}
+$('#provider').onchange = e => pickProvider(e.target.value);
+async function loadSetup() { renderSetup(await api('/api/setup')); }
+$('#saveSetup').onclick = async () => {
+  const provider = $('#provider').value;
+  if (!provider) { $('#saveMsg').textContent = 'Choose a provider first.'; return; }
+  // No route requirement here. The route is step 3 precisely because naming one
+  // needs the key this step is saving; openrouter/free covers the gap meanwhile.
+  $('#saveMsg').textContent = 'saving…';
+  const typed = $('#modelId').value.trim();
+  // Only send a route if it differs from the stored one. Otherwise a stale
+  // field value overwrites a route the probe just verified.
+  const body = {provider, key: $('#apiKey').value};
+  if (typed && typed !== (SETUP.model_id || '')) body.model_id = typed;
+  const out = await api('/api/setup', body);
+  $('#apiKey').value = '';
+  if (out.error) { $('#saveMsg').textContent = out.error; renderSetup(await api('/api/setup')); return; }
+  renderSetup(out);
+  $('#saveMsg').textContent = (out.stored ? 'saved to ' + out.stored + ' — ' : 'saved — ') + 'testing…';
+  await testConnection(true);
+};
+async function testConnection(quiet) {
+  const p = await api('/api/test-connection', {});
+  renderSetup({...SETUP, verified: p.ok});
+  $('#saveMsg').innerHTML = (p.ok ? '✓ ' : '✕ ') + esc(p.headline) + ' — ' + esc(p.detail)
+    + (p.fix ? '<br><span class="muted">' + esc(p.fix) + '</span>' : '');
+  if (!quiet) say(`**${p.headline}.** ${p.detail}${p.fix ? '\n' + p.fix : ''}`);
+  return p;
+}
+$('#testConn').onclick = () => testConnection(false);
+$('#findRoute').onclick = async () => {
+  $('#findRoute').disabled = true; $('#routeMsg').textContent = 'probing routes…';
+  TURN = null; beginTurn();
+  say('Probing routes. A route can be listed and free and still be unusable — an account provider allowlist or an upstream rate limit only shows up on a real call.');
+  const o = await api('/api/find-route', {});
+  $('#findRoute').disabled = false;
+  if (o.error) { $('#routeMsg').textContent = o.error; return; }
+  renderSetup(o);
+  $('#routeMsg').textContent = o.route ? 'using ' + o.route : 'no route answered — see chat';
+  say(o.route
+    ? `Using **${o.route}**. It answered a real call with tools attached.`
+    : 'None of the probed routes answered. The detail is on each probe card above.');
+};
+$('#loadModels').onclick = async () => {
+  $('#loadModels').textContent = 'loading…';
+  const o = await api('/api/models');
+  $('#modelList').innerHTML = (o.models || []).map(m => `<option value="${esc(m)}">`).join('');
+  const n = (o.models || []).length;
+  $('#loadModels').textContent = 'Load routes';
+  $('#routeMsg').textContent = n
+    ? `${n} routes loaded — click the field and type to search them`
+    : 'no routes returned; the key was rejected or the account lists none';
+};
+$('#forgetKey').onclick = async () => { renderSetup(await api('/api/forget-key', {})); $('#saveMsg').textContent = 'key removed from the OS store'; };
+/* ---------- rules panel ---------- */
+let PENDING = null;
 $('#previewRule').onclick = async () => {
-  const target = $('#ruleTarget').value;
-  const field = $('#ruleField').value.trim(), op = $('#ruleOp').value;
+  const target = $('#ruleTarget').value, field = $('#ruleField').value.trim(), op = $('#ruleOp').value;
   const raw = $('#ruleText').value.trim() || 'operator rule';
-  const body = {raw, target, description: raw, reasoning: 'entered directly by the operator',
-                change_class: 'additive'};
+  const body = {raw, target, description: raw, reasoning: 'entered in the rules panel', change_class: 'additive'};
   if (target === 'symbolic') {
-    const v = $('#ruleValue').value;
     const leaf = {field, op};
-    if (!['falsy','truthy','exists','missing'].includes(op)) leaf.value = isNaN(+v) ? v : +v;
+    if (!['falsy','truthy','exists','missing'].includes(op)) {
+      const v = $('#ruleValue').value; leaf.value = isNaN(+v) ? v : +v;
+    }
     body.predicate = JSON.stringify(leaf); body.inputs = [field];
-  } else { body.fragment = raw; }
+  } else body.fragment = raw;
   const out = await api('/api/rule/preview', body);
-  $('#previewCard').classList.remove('hide');
+  $('#previewOut').classList.remove('hide');
   $('#previewOut').textContent = out.error || out.report;
-  $('#breakingOk').parentElement.style.display = out.breaking ? '' : 'none';
-  PENDING = out.rule_id; $('#activateRule').disabled = !!out.error;
+  $('#activateRow').classList.toggle('hide', !!out.error);
+  PENDING = out.rule_id;
 };
-
 $('#activateRule').onclick = async () => {
-  const out = await api('/api/rule/activate',
-    {rule_id: PENDING, confirmed: true, breaking_confirmed: $('#breakingOk').checked});
+  const out = await api('/api/rule/activate', {rule_id: PENDING, confirmed: true,
+    breaking_confirmed: $('#breakingOk').checked});
   $('#previewOut').textContent = out.error || `activated ${out.activated} at ${out.stage}`;
   await refresh();
 };
-
+/* ---------- footer actions ---------- */
 $('#archive').onclick = async () => {
-  const out = await api('/api/archive', {idea: SELECTED});
-  alert(out.error || 'Archived to\n' + out.archived);
+  const o = await api('/api/archive', {idea: SELECTED});
+  say(o.error ? o.error : 'Archived to `' + o.archived + '`');
 };
 $('#export').onclick = () => window.open('/api/idea?id=' + encodeURIComponent(SELECTED));
 $('#editScore').onclick = async () => {
   const dim = prompt('Which dimension?'); if (!dim) return;
   const val = prompt('New value 1-10?'); if (!val) return;
   const why = prompt('Reason (recorded with the override)?'); if (!why) return;
-  const out = await api('/api/override', {idea: SELECTED, dimension: dim, value: +val, reason: why});
-  if (out.error) alert(out.error); else { await refresh(); await select(SELECTED); }
+  const o = await api('/api/override', {idea: SELECTED, dimension: dim, value: +val, reason: why});
+  if (o.error) say(o.error); else { await refresh(); await select(SELECTED); }
 };
-
-/* live stages */
-const es = new EventSource('/api/events');
-es.onopen = () => $('#conn').textContent = 'live';
-es.onerror = () => $('#conn').textContent = 'reconnecting';
-es.onmessage = e => {
-  const m = JSON.parse(e.data);
-  if (m.type === 'run_complete') { $('#conn').textContent = 'live'; return; }
-  const row = document.createElement('div');
-  row.className = m.state;
-  row.innerHTML = `<b>${esc(m.candidate)}</b> ${esc(m.stage)} &middot; ${esc(m.state)} ${esc(m.detail || '')}`;
-  $('#stream').appendChild(row);
-  $('#stream').scrollTop = $('#stream').scrollHeight;
-};
-
-/* boot */
+/* ---------- logs ---------- */
+function pushLog(line) {
+  const d = document.createElement('div'); d.textContent = line;
+  $('#logs').appendChild(d); $('#logs').scrollTop = $('#logs').scrollHeight;
+}
+async function loadLogs() {
+  const o = await api('/api/logs');
+  $('#logs').innerHTML = ''; (o.lines || []).forEach(pushLog);
+}
+/* ---------- boot ---------- */
 (async () => {
-  await refresh();
-  const s = await api('/api/setup');
-  $('#setup').textContent = s.config + '\n\nledger: ' + s.home;
-  $('#negotiation').textContent = s.negotiation;
+  await refresh(); await loadSetup();
+  say(`I keep your idea ledger and I do not guess.
+Two things are true right now: **${STATE.rules.length} rule(s) are loaded**, and \
+${SETUP.has_key ? 'a key is configured.' : '**no key is configured**, so runs use a labelled demo evaluator — the pipeline is real, the candidates are fictional.'}
+${SETUP.has_key ? 'Ask me anything in your own words — I read the ledger with tools rather than guessing.' : 'Type `run <something>`, `rules`, or `help`.'}`);
+  if (!SETUP.has_key) showTab('setup');
 })();
 </script>
 </body>
