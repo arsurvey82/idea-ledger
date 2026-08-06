@@ -79,6 +79,28 @@ DEFAULT_ROUTE = {"openrouter": "openrouter/free", "openai": "gpt-4o-mini"}
 #: work that does not need it. Overridable per install in Setup.
 ANTHROPIC_MODEL = "claude-sonnet-5"
 
+#: Fields a rule may read from the candidate rather than the fact base. Used
+#: only to avoid warning about them when facts are edited.
+_IDEA_FIELDS = frozenset({
+    "capital_required_usd", "requires_live_negotiation", "hours_required_per_week",
+    "track", "name", "id",
+})
+
+
+def _fields_in(predicate: Any) -> set[str]:
+    """Every fact-base field a predicate reads, at any nesting depth."""
+    found: set[str] = set()
+    if isinstance(predicate, Mapping):
+        for key in ("field", "other"):
+            if isinstance(predicate.get(key), str):
+                found.add(predicate[key])
+        for key in ("all", "any"):
+            for child in predicate.get(key) or ():
+                found |= _fields_in(child)
+        if predicate.get("not"):
+            found |= _fields_in(predicate["not"])
+    return found
+
 
 class Broadcaster:
     """Fan out stage events to every open SSE connection."""
@@ -573,15 +595,29 @@ class Workspace:
         from .chat_agent import ChatAgent
         from .providers.openai_compat import OpenAICompatClient
 
-        client = OpenAICompatClient(
-            provider=self.config.provider,
-            api_key=self.config.key(home=self.home) or "",
-            model=self.config.model_id or DEFAULT_ROUTE.get(self.config.provider, ""),
-            on_retry=lambda note: (
-                self.log(note),
-                pub_retry({"type": "chat", "kind": "note", "text": note}),
-            ),
+        key = self.config.key(home=self.home) or ""
+        retry = lambda note: (                                   # noqa: E731
+            self.log(note),
+            pub_retry({"type": "chat", "kind": "note", "text": note}),
         )
+        client: Any
+        if self.config.provider == "anthropic":
+            # OpenAICompatClient has no anthropic endpoint, so building one here
+            # raised "anthropic has no chat endpoint in this build" on every
+            # message and the chat fell back to the keyword grammar.
+            from .providers.anthropic_chat import AnthropicChatClient
+
+            client = AnthropicChatClient(
+                provider="anthropic", api_key=key,
+                model=self.config.model_id or ANTHROPIC_MODEL, on_retry=retry,
+            )
+        else:
+            client = OpenAICompatClient(
+                provider=self.config.provider,
+                api_key=key,
+                model=self.config.model_id or DEFAULT_ROUTE.get(self.config.provider, ""),
+                on_retry=retry,
+            )
         pub = self.bus.publish
         pub_retry = self.bus.publish
         agent = ChatAgent(
@@ -814,6 +850,172 @@ class Workspace:
         return out
 
     # -- actions ---------------------------------------------------------
+    def diagnose(self) -> dict[str, Any]:
+        """Check this install, end to end, and say what to do about each result.
+
+        Everything here was previously done by hand from a terminal. The app
+        runs on the operator's machine and holds the key; it is the only thing
+        that *can* answer these, so making someone else run scripts to find out
+        why a run produced fictional data was the wrong shape.
+
+        Each check reports state, what was observed, and the next action. Order
+        matters: later checks depend on earlier ones, so the first failure is
+        usually the only one worth reading.
+        """
+        from . import connectivity
+        from . import secrets as secret_store
+
+        out: list[dict[str, str]] = []
+
+        def add(name: str, state: str, detail: str, fix: str = "") -> None:
+            out.append({"name": name, "state": state, "detail": detail, "fix": fix})
+
+        # -- where things live -------------------------------------------
+        try:
+            probe = self.home / ".writable"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink()
+            add("Ledger directory", "ok", str(self.home))
+        except OSError as exc:
+            add("Ledger directory", "bad", f"{self.home} is not writable: {exc}",
+                "Choose another location with the IDEA_LEDGER_HOME environment variable.")
+
+        store_info = secret_store.describe()
+        add("OS secret store", "ok" if store_info.available else "warn",
+            f"{store_info.backend} - {store_info.detail}",
+            "" if store_info.available
+            else f"Set {self.config.key_ref.env_var or 'the provider variable'} in your shell instead.")
+
+        # -- identity ------------------------------------------------------
+        provider = self.config.provider
+        if not provider:
+            add("Provider", "bad", "none chosen", "Pick one at the top of Setup.")
+            return {"checks": out, "summary": _summarise_checks(out)}
+        add("Provider", "ok", provider)
+
+        key = self.config.key(home=self.home)
+        if not key:
+            add("API key", "bad", "no key stored and no environment variable set",
+                "Paste a key in Setup and press Save & test.")
+            return {"checks": out, "summary": _summarise_checks(out)}
+
+        complaint = validate_key(provider, key)[1]
+        add("API key", "bad" if complaint else "ok",
+            complaint or f"stored, ending {secret_store.tail(key)}",
+            "Press Forget this key, then paste the real one." if complaint else "")
+
+        # -- can it actually talk --------------------------------------
+        p = connectivity.check(provider, key)
+        add("Connection", "ok" if p.ok else "bad", f"{p.headline} - {p.detail}", p.fix)
+
+        # -- is there a usable model -----------------------------------
+        model = self.config.model_id or (
+            ANTHROPIC_MODEL if provider == "anthropic" else DEFAULT_ROUTE.get(provider, "")
+        )
+        add("Model", "ok" if model else "warn", model or "none resolved",
+            "" if model else "Press Save & test; the model is resolved from your key.")
+
+        # -- what the pipeline can do with it ---------------------------
+        report = self.setup().get("negotiation", "")
+        refused = [l.strip() for l in report.splitlines() if "cannot run" in l]
+        add("Pipeline stages", "ok" if not refused else "warn",
+            "every stage can run" if not refused
+            else f"{len(refused)} of 5 refused: "
+                 + ", ".join(l.split()[0] for l in refused),
+            "" if not refused
+            else "Those stages need a capability this provider lacks. Anthropic has all of them.")
+
+        # -- and what a run will therefore produce ----------------------
+        demo = self.why_demo()
+        add("Run output", "warn" if demo else "ok",
+            demo or "real candidates, checked against cited competitors",
+            "Switch to a provider that can search." if demo else "")
+
+        # -- the conversational path ------------------------------------
+        try:
+            self._chat_client()
+            add("Chat transport", "ok", f"{provider} has a chat client in this build")
+        except Exception as exc:
+            add("Chat transport", "bad", str(exc)[:160],
+                "Messages will fall back to the keyword grammar until this works.")
+
+        # -- the operator's own content ---------------------------------
+        rules = self.rules()
+        active = [r for r in rules if r.active]
+        add("Your rules", "ok" if active else "warn",
+            f"{len(active)} active of {len(rules)}",
+            "" if active else "With no active rules nothing is gated; add one in the Rules tab.")
+        facts = self.facts().fields
+        unset = [k for k, v in facts.items() if v in ("unset", "", None, [])]
+        add("Your facts", "warn" if unset else "ok",
+            f"{len(facts)} fields"
+            + (f", {len(unset)} still unset: {', '.join(unset)}" if unset else ""),
+            "Edit them in the Facts tab; gates read these, so defaults gate on fiction."
+            if unset else "")
+
+        return {"checks": out, "summary": _summarise_checks(out)}
+
+    def save_facts(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Replace the fact base wholesale.
+
+        The facts panel was read-only, which quietly made the shipped defaults
+        permanent - and gates read these fields, so a ledger left with
+        location "unset" and a $20,000 ceiling was gating on fiction while
+        looking configured.
+
+        Rules that reference a removed field fail closed rather than silently
+        passing, so the count of those is reported back instead of the edit
+        being refused: the operator may well be about to fix the rule too.
+        """
+        raw = payload.get("facts")
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                return {"error": f"that is not valid JSON: {exc}"}
+        if not isinstance(raw, dict):
+            return {"error": "facts must be a JSON object of field: value"}
+
+        self.store.save_facts(FactBase(dict(raw)))
+        self.log(f"facts updated: {len(raw)} field(s)")
+
+        referenced = set()
+        for rule in self.rules():
+            referenced |= _fields_in(rule.predicate)
+        orphaned = sorted(f for f in referenced if f not in raw and f not in _IDEA_FIELDS)
+        return {
+            "ok": True,
+            "orphaned": orphaned,
+            "note": (
+                f"{len(orphaned)} rule field(s) no longer exist in your facts: "
+                + ", ".join(orphaned)
+                + ". Rules reading them will fail closed - nothing passes - rather "
+                  "than silently letting ideas through."
+            ) if orphaned else "",
+            **self.state(),
+        }
+
+    def _chat_client(self) -> Any:
+        """The client the conversational agent will use. Raises if there is none."""
+        key = self.config.key(home=self.home) or ""
+        if self.config.provider == "anthropic":
+            from .providers.anthropic_chat import AnthropicChatClient
+
+            return AnthropicChatClient(
+                provider="anthropic", api_key=key,
+                model=self.config.model_id or ANTHROPIC_MODEL,
+            )
+        from .providers.openai_compat import ENDPOINTS, OpenAICompatClient
+
+        if self.config.provider not in ENDPOINTS:
+            raise RuntimeError(
+                f"{self.config.provider} has no chat client in this build"
+            )
+        return OpenAICompatClient(
+            provider=self.config.provider, api_key=key,
+            model=self.config.model_id or DEFAULT_ROUTE.get(self.config.provider, ""),
+        )
+
     def why_demo(self) -> str:
         """Why this run will use fictional candidates, in one sentence.
 
@@ -1004,6 +1206,22 @@ _FAILURE_HINTS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _summarise_checks(checks: list[dict[str, str]]) -> str:
+    """One line naming the first thing worth fixing.
+
+    Later checks depend on earlier ones, so the first failure is usually the
+    only one worth reading; listing all of them equally invites fixing the
+    wrong one.
+    """
+    bad = [c for c in checks if c["state"] == "bad"]
+    warn = [c for c in checks if c["state"] == "warn"]
+    if bad:
+        return f"{len(bad)} blocking. Start with: {bad[0]['name']} - {bad[0]['detail'][:90]}"
+    if warn:
+        return f"Working, with {len(warn)} thing(s) to know. First: {warn[0]['name']}"
+    return f"All {len(checks)} checks passed. Ask it something in your own words."
+
+
 def _explain_failure(exc: BaseException) -> tuple[str, str]:
     """(message, fix). Strips the exception class and adds the next action."""
     raw = str(exc).strip() or type(exc).__name__
@@ -1154,6 +1372,8 @@ def make_handler(ws: Workspace, evaluator_factory: Callable[[], Any]):
                 return self._json(ws.dossier(params.get("id", [""])[0]))
             if route.path == "/api/models":
                 return self._json(ws.list_models())
+            if route.path == "/api/diagnose":
+                return self._json(ws.diagnose())
             if route.path == "/api/logs":
                 return self._json({"lines": ws.logs[-200:]})
             if route.path == "/api/events":
@@ -1202,6 +1422,8 @@ def make_handler(ws: Workspace, evaluator_factory: Callable[[], Any]):
                             int(body.get("value", 0)), body.get("reason", ""),
                         )
                     )
+                if route.path == "/api/facts":
+                    return self._json(ws.save_facts(body))
                 if route.path == "/api/archive":
                     return self._json(ws.archive(body.get("idea", "")))
             except PermissionError as exc:

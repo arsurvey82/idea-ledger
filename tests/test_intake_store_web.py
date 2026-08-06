@@ -558,3 +558,75 @@ class RunFailureIsReported(unittest.TestCase):
                     message.startswith(("TransportUnavailable", "ChatError")),
                     "the exception class should be stripped",
                 )
+
+
+class SelfDiagnosis(unittest.TestCase):
+    """The app checks itself. It runs on the operator's machine and holds the
+    key, so it is the only thing that can - making someone run scripts to find
+    out why a run produced fictional data was the wrong shape.
+    """
+
+    def test_every_check_names_a_state_and_a_next_action_when_it_fails(self) -> None:
+        with TemporaryDirectory() as tmp:
+            ws = Workspace(pathlib.Path(tmp))
+            ws.config = Config()          # nothing configured at all
+            report = ws.diagnose()
+        self.assertTrue(report["checks"])
+        for check in report["checks"]:
+            with self.subTest(check=check["name"]):
+                self.assertIn(check["state"], {"ok", "warn", "bad"})
+                self.assertTrue(check["detail"], "a check with no observation is noise")
+                if check["state"] == "bad":
+                    self.assertTrue(check["fix"], "a blocking check must say what to do")
+
+    def test_it_stops_at_the_first_blocker_rather_than_guessing_past_it(self) -> None:
+        """Later checks depend on earlier ones; running them without a provider
+        would report a cascade of failures with one real cause."""
+        with TemporaryDirectory() as tmp:
+            ws = Workspace(pathlib.Path(tmp))
+            ws.config = Config()
+            names = [c["name"] for c in ws.diagnose()["checks"]]
+        self.assertIn("Provider", names)
+        self.assertNotIn("Connection", names)
+
+    def test_the_summary_points_at_one_thing(self) -> None:
+        with TemporaryDirectory() as tmp:
+            ws = Workspace(pathlib.Path(tmp))
+            ws.config = Config()
+            self.assertIn("Provider", ws.diagnose()["summary"])
+
+
+class EditableFacts(unittest.TestCase):
+    """The facts panel was read-only, which quietly made the shipped defaults
+    permanent - and gates read these fields by name."""
+
+    def test_facts_can_be_replaced(self) -> None:
+        with TemporaryDirectory() as tmp:
+            ws = Workspace(pathlib.Path(tmp))
+            out = ws.save_facts({"facts": {"budget_ceiling_usd": 5000, "location": "Sofia"}})
+            self.assertNotIn("error", out)
+            self.assertEqual(5000, ws.facts().get("budget_ceiling_usd"))
+            self.assertEqual("Sofia", ws.facts().get("location"))
+
+    def test_a_json_string_is_accepted_since_the_editor_sends_text(self) -> None:
+        with TemporaryDirectory() as tmp:
+            ws = Workspace(pathlib.Path(tmp))
+            ws.save_facts({"facts": '{"budget_ceiling_usd": 100}'})
+            self.assertEqual(100, ws.facts().get("budget_ceiling_usd"))
+
+    def test_malformed_json_is_refused_without_touching_the_store(self) -> None:
+        with TemporaryDirectory() as tmp:
+            ws = Workspace(pathlib.Path(tmp))
+            before = dict(ws.facts().fields)
+            out = ws.save_facts({"facts": "{not json"})
+            self.assertIn("error", out)
+            self.assertEqual(before, dict(ws.facts().fields))
+
+    def test_removing_a_field_a_rule_reads_is_reported_not_silently_allowed(self) -> None:
+        """Such a rule fails closed. That is the safe direction, but the operator
+        has to be told, or a gate quietly starts rejecting everything."""
+        with TemporaryDirectory() as tmp:
+            ws = Workspace(pathlib.Path(tmp))
+            out = ws.save_facts({"facts": {"hours_per_week": 12}})
+            self.assertIn("budget_ceiling_usd", out["orphaned"])
+            self.assertIn("fail closed", out["note"])

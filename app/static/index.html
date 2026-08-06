@@ -207,6 +207,8 @@ tbody tr[aria-selected="true"]{box-shadow:inset 2px 0 0 var(--oxide)}
       <button data-t="rules">Rules</button>
       <button data-t="facts">Facts</button>
       <button data-t="setup">Setup</button>
+      <button data-t="check">Check</button>
+      <button data-t="help">Help</button>
       <button data-t="logs">Logs</button>
     </div>
     <div class="pane" id="p-output">
@@ -255,9 +257,101 @@ tbody tr[aria-selected="true"]{box-shadow:inset 2px 0 0 var(--oxide)}
       <h3>Pipeline manifest</h3><pre id="manifest"></pre>
     </div>
     <div class="pane hide" id="p-facts">
-      <h3>Your facts</h3><pre id="facts"></pre>
+      <h3>Your facts</h3>
+      <div class="hint" style="margin-bottom:8px">Gates read these fields by name, so
+        editing a value changes what your rules enforce — no rule is rewritten.
+        <b>location</b> and <b>licences_held</b> ship unset; leaving them that way
+        means gating on placeholder data.</div>
+      <textarea id="factsEdit" spellcheck="false"
+        style="width:100%;min-height:190px;font-family:var(--mono);font-size:12.5px;
+               background:var(--bg);border:1px solid var(--rule);border-radius:6px;padding:10px"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="btn primary" id="saveFacts">Save facts</button>
+        <button class="btn" id="revertFacts">Revert</button>
+        <span class="muted" id="factsMsg"></span>
+      </div>
       <h3>Load-bearing assumptions</h3><pre id="assumptions"></pre>
       <h3>Calibration</h3><pre id="calibration"></pre>
+    </div>
+    <div class="pane hide" id="p-check">
+      <h3>Check this install</h3>
+      <div class="hint" style="margin-bottom:10px">Runs every check against your real
+        key and provider: storage, credentials, connection, model, capabilities, chat
+        transport, and your own rules and facts. Nothing here is simulated.</div>
+      <button class="btn primary" id="runCheck">Run checks</button>
+      <p class="muted" id="checkSummary" style="margin:10px 0"></p>
+      <div id="checkList"></div>
+    </div>
+    <div class="pane hide" id="p-help">
+      <h3>What this is</h3>
+      <p class="muted">A ledger for business ideas. You say what to look at; candidates
+      are generated, gated against <b>your</b> rules, checked for real cited
+      competitors, then scored. Gates and scoring are plain code — no model assigns a
+      number — so the same evidence always gives the same score.</p>
+
+      <h3>Just talk to it</h3>
+      <p class="muted">There are no commands to learn. Type what you want:</p>
+      <pre>lets look at custom wooden furniture in Florida
+why was that one rejected?
+what is that score resting on?
+add a rule rejecting anything needing more than 8 hours a week
+how does the scoring work here?</pre>
+
+      <h3>What the outcomes mean</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <tr><td style="padding:5px 8px 5px 0"><b>scored</b></td>
+            <td class="muted">Passed your gates, found enough cited competitors, got a number.</td></tr>
+        <tr><td style="padding:5px 8px 5px 0"><b>gate rejected</b></td>
+            <td class="muted">Killed by one of your rules, in code, before any model judged it.
+            The rule is named.</td></tr>
+        <tr><td style="padding:5px 8px 5px 0"><b>under researched</b></td>
+            <td class="muted"><b>Not a failure.</b> Too few competitors with resolvable urls,
+            so it refused to score rather than score thin evidence.</td></tr>
+        <tr><td style="padding:5px 8px 5px 0"><b>refuted</b></td>
+            <td class="muted">A check found the premise does not hold.</td></tr>
+        <tr><td style="padding:5px 8px 5px 0"><b>duplicate</b></td>
+            <td class="muted">Already on your reject list. Reviving one is a deliberate act.</td></tr>
+      </table>
+
+      <h3>The tabs</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <tr><td style="padding:5px 8px 5px 0"><b>Output</b></td>
+            <td class="muted">The selected idea in full: every dimension with its value,
+            confidence, provenance and falsifier. Override a value here, or archive it.</td></tr>
+        <tr><td style="padding:5px 8px 5px 0"><b>Ideas</b></td>
+            <td class="muted">Everything in the ledger with status and score. Click to open.</td></tr>
+        <tr><td style="padding:5px 8px 5px 0"><b>Rules</b></td>
+            <td class="muted">Your gates. Add one below the list, or just ask in chat —
+            either way it is previewed against the ledger before it can be activated.</td></tr>
+        <tr><td style="padding:5px 8px 5px 0"><b>Facts</b></td>
+            <td class="muted">Editable. Gates read these by name, so this is where you
+            change what gets rejected without touching a rule.</td></tr>
+        <tr><td style="padding:5px 8px 5px 0"><b>Setup</b></td>
+            <td class="muted">Provider, key, model. Several keys can be saved and named.</td></tr>
+        <tr><td style="padding:5px 8px 5px 0"><b>Check</b></td>
+            <td class="muted">Ask the app to diagnose itself. Start here when something
+            looks wrong.</td></tr>
+      </table>
+
+      <h3>Reading a score</h3>
+      <p class="muted">The column that matters is <b>what would change it</b> — the
+      falsifier. It names the observation that would move that number. If you cannot
+      imagine checking it, the score is decoration. <b>Provenance</b> says whether a
+      value was derived from evidence or set by you; overridden values are excluded
+      from calibration, so a judgement call never teaches the system it was a
+      measurement.</p>
+
+      <h3>Why a run might say demo</h3>
+      <p class="muted">Candidates named <code>demo-</code> are fictional. That happens
+      when the provider cannot search the web, because the alternative is letting a
+      model invent competitors. The gates and scoring still ran for real. The
+      <b>Check</b> tab names the exact cause.</p>
+
+      <h3>Where your data is</h3>
+      <p class="muted">Everything is on this machine. The key is in your OS secret
+      store, never in the repository or the config file. Archives are dated folders
+      under your ledger directory containing <code>dossier.md</code> and
+      <code>snapshot.json</code> — plain files, readable without this app.</p>
     </div>
     <div class="pane hide" id="p-setup">
       <div class="state" id="keyState"><i class="led" id="stLed"></i><span id="keyText"><span class="hd">Reading your settings</span>If this does not
@@ -556,7 +650,10 @@ async function select(id) {
 async function refresh() {
   STATE = await api('/api/state');
   renderIdeas(); renderRules();
-  $('#facts').textContent = JSON.stringify(STATE.facts, null, 2);
+  // Only refill the editor when it is not being edited, or a background refresh
+  // would discard whatever was half-typed.
+  if (document.activeElement !== $('#factsEdit'))
+    $('#factsEdit').value = JSON.stringify(STATE.facts, null, 2);
   $('#assumptions').textContent = STATE.assumptions;
   $('#calibration').textContent = STATE.calibration;
   $('#manifest').textContent = STATE.manifest;
@@ -771,6 +868,44 @@ async function loadLogs() {
   const o = await api('/api/logs');
   $('#logs').innerHTML = ''; (o.lines || []).forEach(pushLog);
 }
+/* ---------- facts ---------- */
+$('#saveFacts').onclick = async () => {
+  $('#factsMsg').textContent = 'saving…';
+  const o = await api('/api/facts', {facts: $('#factsEdit').value});
+  if (o.error) { $('#factsMsg').textContent = o.error; return; }
+  STATE = o; renderIdeas(); renderRules();
+  $('#factsMsg').textContent = o.note || 'saved — gates now read these values';
+  say(o.note
+    ? `Facts saved. **${esc(o.note)}**`
+    : 'Facts saved. Your gates read these fields by name, so this changes what gets rejected on the next run.');
+};
+$('#revertFacts').onclick = async () => {
+  await refresh();
+  $('#factsEdit').value = JSON.stringify(STATE.facts, null, 2);
+  $('#factsMsg').textContent = 'reverted to what is stored';
+};
+
+/* ---------- self-check ---------- */
+const CHECK_COLOUR = {ok: 'var(--ok)', warn: 'var(--warn)', bad: 'var(--stop)'};
+$('#runCheck').onclick = async () => {
+  $('#runCheck').disabled = true;
+  $('#checkSummary').textContent = 'checking…';
+  $('#checkList').innerHTML = '';
+  const o = await api('/api/diagnose');
+  $('#runCheck').disabled = false;
+  $('#checkSummary').textContent = o.summary || '';
+  $('#checkList').innerHTML = (o.checks || []).map(c => `
+    <div style="display:grid;grid-template-columns:8px 1fr;gap:10px;padding:8px 0;
+                border-top:1px solid var(--rule)">
+      <span style="width:8px;height:8px;border-radius:50%;margin-top:7px;
+                   background:${CHECK_COLOUR[c.state] || 'var(--dim)'}"></span>
+      <div><b>${esc(c.name)}</b><br>
+        <span class="muted">${esc(c.detail)}</span>
+        ${c.fix ? `<br><span class="muted" style="color:var(--oxide)">→ ${esc(c.fix)}</span>` : ''}
+      </div>
+    </div>`).join('');
+};
+
 /* ---------- boot ---------- */
 (async () => {
   await refresh(); await loadSetup();
