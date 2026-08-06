@@ -583,7 +583,16 @@ async function send(text) {
     bubble('me', esc(text));
     $('#msg').value = '';
     TURN = null; beginTurn();
-    await api('/api/chat', {message: text});
+    const out = await api('/api/chat', {message: text});
+    // The stream is the nice path; the response is the reliable one. If nothing
+    // arrived over SSE this turn stays an empty avatar next to a call that
+    // succeeded, which is exactly what it looked like when the stream dropped.
+    if (TURN && !TURN.text) {
+      const spoken = (out.said || []).filter(s => s.kind === 'text' && s.text);
+      if (spoken.length) spoken.forEach(s => say(s.text));
+      else say('_The reply did not arrive over the live stream and the server '
+             + 'returned nothing to show. Try again._');
+    }
     await refresh();
   } catch (e) {
     // Reported rather than swallowed - a silent failure here is exactly what
@@ -608,7 +617,22 @@ $('#sugg').innerHTML = SUGGESTIONS.map(s => `<button>${esc(s)}</button>`).join('
 $('#sugg').querySelectorAll('button').forEach(b => b.onclick = () => send(b.textContent));
 /* ---------- live bus ---------- */
 const es = new EventSource('/api/events');
-es.onopen = () => { $('#busWord').textContent = 'live'; $('#busDot').className = 'led on'; };
+/* The build stamp this page was served with. On every reconnect the server is
+   asked for its own; if they differ the source changed underneath us and the
+   page reloads itself. That is what makes editing a .py file land in the
+   browser without anyone restarting anything. */
+let BUILD = null;
+async function checkBuild() {
+  try {
+    const {build} = await api('/api/build');
+    if (BUILD === null) { BUILD = build; return; }
+    if (build && build !== BUILD) location.reload();
+  } catch (_) { /* the server is mid-restart; the next reconnect will ask again */ }
+}
+es.onopen = () => {
+  $('#busWord').textContent = 'live'; $('#busDot').className = 'led on';
+  checkBuild();
+};
 es.onerror = () => { $('#busWord').textContent = 'reconnecting'; $('#busDot').className = 'led off'; };
 es.onmessage = e => {
   const m = JSON.parse(e.data);

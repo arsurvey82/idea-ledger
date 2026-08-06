@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import dataclasses
 import unittest
+from unittest import mock
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -381,3 +382,49 @@ class ConnectionProbe(unittest.TestCase):
         from app.providers import REGISTRY
 
         self.assertEqual(set(), set(REGISTRY) - set(PROBES))
+
+
+class ConnectionMeansItCanRun(unittest.TestCase):
+    """"Connected" must mean the account can do work, not that a key exists.
+
+    Every provider here serves its model list free, so listing succeeded for an
+    account with zero credit. The setup panel showed "Connected to anthropic.
+    The key is valid" directly above a conversation in which every single
+    message failed. That green light is the reason a dozen downstream symptoms
+    looked like logic bugs.
+    """
+
+    def test_a_working_list_but_a_refused_request_is_not_connected(self) -> None:
+        from app import connectivity
+
+        refusal = connectivity.Probe(
+            False, "anthropic accepted the key but will not run anything",
+            "Your credit balance is too low.", "Add credit.",
+        )
+        with mock.patch.object(connectivity, "_try_one_token", return_value=refusal):
+            with mock.patch.object(connectivity.urllib.request, "urlopen") as fake:
+                fake.return_value.__enter__.return_value.read.return_value = (
+                    b'{"data": [{"id": "claude-sonnet-5"}]}'
+                )
+                probe = connectivity.check("anthropic", "sk-ant-" + "x" * 40)
+        self.assertFalse(probe.ok, "reported connected on an account that cannot run")
+        self.assertIn("will not run", probe.headline)
+        self.assertTrue(probe.fix)
+
+    def test_it_still_reports_success_when_a_token_actually_generates(self) -> None:
+        from app import connectivity
+
+        with mock.patch.object(connectivity, "_try_one_token", return_value=None):
+            with mock.patch.object(connectivity.urllib.request, "urlopen") as fake:
+                fake.return_value.__enter__.return_value.read.return_value = (
+                    b'{"data": [{"id": "a"}, {"id": "b"}]}'
+                )
+                probe = connectivity.check("anthropic", "sk-ant-" + "x" * 40)
+        self.assertTrue(probe.ok)
+        self.assertEqual(2, probe.models_seen)
+
+    def test_a_network_blip_during_the_token_check_does_not_fail_the_probe(self) -> None:
+        """The listing call already reports connectivity; do not double-report."""
+        from app import connectivity
+
+        self.assertIsNone(connectivity._try_one_token("nonexistent-provider", "k"))

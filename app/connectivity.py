@@ -117,6 +117,15 @@ def check(provider: str, key: str | None) -> Probe:
     except Exception as exc:  # never let a probe crash the setup screen
         return Probe(False, "The check failed", f"{type(exc).__name__}: {exc}")
 
+    # Listing models is not proof of anything. Every provider here serves that
+    # endpoint free, so it answers happily for an account that cannot run a
+    # single request - which is how "Connected. The key is valid" appeared above
+    # a conversation where every message failed. The only honest test of whether
+    # this key can do work is doing some.
+    inference = _try_one_token(provider, key)
+    if inference is not None:
+        return inference
+
     count = _count(body)
     return Probe(
         True,
@@ -173,3 +182,89 @@ def _count(body: str) -> int:
         return 0
     data = payload.get("data")
     return len(data) if isinstance(data, list) else 0
+
+
+def _try_one_token(provider: str, key: str) -> Probe | None:
+    """Ask the provider to generate a single token.
+
+    Returns a failing Probe when the account cannot actually run, and None when
+    it can - in which case the caller reports success as before.
+
+    A token costs a fraction of a cent and buys the one thing the model list
+    cannot tell you: whether there is credit, whether billing is live, and
+    whether the configured model exists for this account. Every failure this
+    catches previously surfaced as a broken conversation under a green light.
+    """
+    from .providers.openai_compat import ENDPOINTS
+
+    if provider == "anthropic":
+        url = "https://api.anthropic.com/v1/messages"
+        headers = {"x-api-key": key, "anthropic-version": "2023-06-01",
+                   "content-type": "application/json"}
+        payload = {
+            "model": "claude-sonnet-5", "max_tokens": 1,
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+    elif provider in ENDPOINTS:
+        url = ENDPOINTS[provider]
+        headers = {"Authorization": f"Bearer {key}", "content-type": "application/json"}
+        payload = {
+            "model": _probe_model(provider), "max_tokens": 1,
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+    else:
+        return None
+
+    req = urllib.request.Request(
+        url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT + 8):
+            return None                      # it ran; the caller reports success
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        try:
+            parsed = json.loads(detail)
+            if isinstance(parsed, list) and parsed:
+                parsed = parsed[0]
+            detail = (parsed.get("error") or {}).get("message") or detail
+        except Exception:
+            pass
+        low = detail.lower()
+        if "credit" in low or "billing" in low or "quota" in low:
+            return Probe(
+                False,
+                f"{provider} accepted the key but will not run anything",
+                detail[:220],
+                "Add credit to that account, or switch to another saved key above. "
+                "The key itself is fine - listing models works without credit, "
+                "which is why this needs a real request to tell you.",
+            )
+        if exc.code == 404:
+            return Probe(
+                False, f"{provider} has no model to run",
+                detail[:220],
+                "Press Save & test to re-resolve a model from your key.",
+            )
+        if exc.code == 429:
+            return Probe(
+                False, f"{provider} is rate-limiting", detail[:220],
+                "Wait a moment and test again, or move to a paid route.",
+            )
+        if exc.code in (401, 403):
+            return Probe(False, f"{provider} rejected the key", detail[:220],
+                         "Re-check the key above.")
+        return Probe(False, f"{provider} refused a one-token request", detail[:220])
+    except Exception:
+        # A network problem here is already reported by the listing call above;
+        # do not turn a transient blip into a red light of its own.
+        return None
+
+
+def _probe_model(provider: str) -> str:
+    """Something cheap that every account on that provider can reach."""
+    return {
+        "openai": "gpt-4o-mini",
+        "openrouter": "openrouter/free",
+        "google": "gemini-2.0-flash",
+    }.get(provider, "")

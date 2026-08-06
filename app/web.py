@@ -54,6 +54,11 @@ _PROBEABLE = {"openai", "openrouter"}
 #: favour - that is what the explicit "Find one that works" button is for.
 _AUTO_MODEL = {"google", "openai"}
 
+#: Things the ledger can answer with no model at all. When a model call fails,
+#: these still run; anything else gets the error and stops, because explaining
+#: the product to someone whose call just failed is noise.
+_OFFLINE_COMMANDS = {"rules", "facts", "status", "help", "test", "run", "evaluate", "?"}
+
 STATIC = Path(__file__).resolve().parent / "static"
 RUBRIC = Rubric(
     version=1,
@@ -108,6 +113,9 @@ class Broadcaster:
     def __init__(self) -> None:
         self._clients: list[queue.Queue[str]] = []
         self._lock = threading.Lock()
+        # Per-thread, because one request handler must not collect another
+        # request's messages. The server is threaded.
+        self._local = threading.local()
 
     def subscribe(self) -> queue.Queue[str]:
         q: queue.Queue[str] = queue.Queue()
@@ -121,10 +129,26 @@ class Broadcaster:
                 self._clients.remove(q)
 
     def publish(self, payload: Mapping[str, Any]) -> None:
+        # Anything published during a request is also handed back in that
+        # request's response. The event stream was the *only* delivery path for
+        # a reply, so a dropped connection lost the answer entirely and left an
+        # empty turn on screen - the HTTP call had succeeded and said nothing.
+        collector = getattr(self._local, "collect", None)
+        if collector is not None:
+            collector.append(dict(payload))
         line = json.dumps(payload)
         with self._lock:
             for q in list(self._clients):
                 q.put(line)
+
+    def collecting(self) -> list[dict[str, Any]]:
+        """Start collecting on this thread. Returns the list being filled."""
+        collected: list[dict[str, Any]] = []
+        self._local.collect = collected
+        return collected
+
+    def stop_collecting(self) -> None:
+        self._local.collect = None
 
 
 class Workspace:
@@ -415,6 +439,20 @@ class Workspace:
 
     # -- chat ------------------------------------------------------------
     def chat(self, message: str, evaluator: Any) -> dict[str, Any]:
+        """Answer one message, and return what was said as well as streaming it.
+
+        The stream is the nice path; the response is the reliable one. Delivery
+        used to be stream-only, so a dropped EventSource lost the reply outright
+        and left an empty turn on screen next to a successful HTTP call.
+        """
+        said = self.bus.collecting()
+        try:
+            result = self._chat(message, evaluator)
+        finally:
+            self.bus.stop_collecting()
+        return {**result, "said": said}
+
+    def _chat(self, message: str, evaluator: Any) -> dict[str, Any]:
         """Interpret one operator message and act on it.
 
         Deliberately a command surface with an agentic presentation rather than
@@ -434,15 +472,39 @@ class Workspace:
         # for that" - the exact app-like behaviour this surface exists to avoid.
         # Chat needs a chat endpoint and nothing else; search and schema support
         # are stage requirements, not conversation requirements.
-        if text and self.config.key(home=self.home) and self.config.provider in _COMPAT:
+        # Ask whether a chat client can be built, rather than checking a set of
+        # provider names. _COMPAT means "speaks the OpenAI dialect" and excludes
+        # anthropic, so gating on it meant the Anthropic chat client written for
+        # exactly this was never called - the fourth time a hard-coded provider
+        # set has silently disabled a working path.
+        can_talk = False
+        if text and self.config.key(home=self.home):
+            try:
+                self._chat_client()
+                can_talk = True
+            except Exception as exc:
+                self.log(f"no chat client: {exc}")
+
+        if can_talk:
             try:
                 return self._agent_chat(text, evaluator)
             except Exception as exc:
                 self.log(f"agent failed: {exc}")
+                message, fix = _explain_failure(exc)
+                # A message the model could not read is not a reason to explain
+                # the product. Say what broke and what to do, and stop - unless
+                # this happens to be one of the offline commands, which still
+                # work and are worth running.
+                if low.split(" ", 1)[0] not in _OFFLINE_COMMANDS:
+                    self.bus.publish({
+                        "type": "chat", "role": "agent", "kind": "text",
+                        "text": f"**{message}**" + (f"\n\n{fix}" if fix else ""),
+                    })
+                    return {"ok": False, "error": message, "fix": fix}
                 self.bus.publish({
                     "type": "chat", "role": "agent", "kind": "text",
-                    "text": f"**The model call failed.** {exc}\n"
-                            "Falling back to commands for this message — try `help`.",
+                    "text": f"**{message}** Answering `{low.split(' ', 1)[0]}` "
+                            "from the ledger directly, which needs no model.",
                 })
 
         say = lambda t: self.bus.publish({"type": "chat", "role": "agent", "kind": "text", "text": t})
@@ -1372,6 +1434,10 @@ def make_handler(ws: Workspace, evaluator_factory: Callable[[], Any]):
                 return self._json(ws.dossier(params.get("id", [""])[0]))
             if route.path == "/api/models":
                 return self._json(ws.list_models())
+            if route.path == "/api/build":
+                from .reloader import build_stamp
+
+                return self._json({"build": build_stamp()})
             if route.path == "/api/diagnose":
                 return self._json(ws.diagnose())
             if route.path == "/api/logs":
