@@ -604,10 +604,11 @@ function pickProvider(p, model) {
   const armed = !!(SETUP.has_key && SETUP.provider === p);
   $('#loadModels').disabled = $('#findRoute').disabled = !armed;
   $('#routeHint').innerHTML = armed
-    ? `OpenRouter forwards to whichever model you name, so capabilities belong to the
-       route rather than to the gateway. <b>Find one that works</b> places a real call
-       against each candidate, because a route can be listed, be free, and still be
-       refused by your account. Left blank, <b>openrouter/free</b> is used.`
+    ? `Capabilities belong to the route, not to the gateway, so this choice decides
+       which pipeline stages can run at all. <b>Find one that works</b> considers only
+       routes that publish support for structured output and tools, then places a real
+       call against each: free routes first, then the cheapest paid ones, because no
+       free route satisfies every stage. Left blank, <b>openrouter/free</b> is used.`
     : `<b>Save an OpenRouter key in step 2 first.</b> Listing routes is an authenticated
        call, so there is nothing here to look up until a key exists. Left blank,
        <b>openrouter/free</b> is used.`;

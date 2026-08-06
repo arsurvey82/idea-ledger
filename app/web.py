@@ -526,7 +526,7 @@ class Workspace:
             }
         )
 
-    def find_route(self) -> dict[str, Any]:
+    def find_route(self, payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """Probe real routes until one answers, then adopt it.
 
         Replaces guesswork: a route can be listed, free, and still unusable
@@ -536,14 +536,20 @@ class Workspace:
         from dataclasses import replace as _replace
         from .providers.openai_compat import find_working_route
 
+        payload = payload or {}
         key = self.config.key(home=self.home)
         if not key or self.config.provider not in {"openai", "openrouter"}:
             return {"error": "save a working key for openai or openrouter first"}
 
-        self.log("probing routes for one that answers")
+        # Free routes are tried first because they cost nothing, but the search
+        # does not stop there: on a free tier no route satisfies every stage, so
+        # restricting the probe to free routes guarantees a partial pipeline.
+        free_only = bool(payload.get("free_only", False))
+        self.log(f"probing {'free' if free_only else 'free-first, then paid'} routes")
         winner, attempts = find_working_route(
             key,
             provider=self.config.provider,
+            free_only=free_only,
             on_try=lambda m, note: self.bus.publish(
                 {"type": "chat", "kind": "tool", "tool": f"probe {m}",
                  "state": "started" if note == "trying" else
@@ -841,7 +847,7 @@ def make_handler(ws: Workspace, evaluator_factory: Callable[[], Any]):
                 if route.path == "/api/test-connection":
                     return self._json(ws.test_connection())
                 if route.path == "/api/find-route":
-                    return self._json(ws.find_route())
+                    return self._json(ws.find_route(body))
                 if route.path == "/api/forget-key":
                     return self._json(ws.forget_key())
                 if route.path == "/api/rule/preview":

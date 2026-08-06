@@ -7,6 +7,11 @@ competitors, which was the largest measured error in the system this replaces.
 
 from __future__ import annotations
 
+import io
+import json
+from unittest import mock
+from app.providers import openai_compat
+
 import unittest
 
 from app.providers import (
@@ -91,3 +96,65 @@ class Negotiation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RouteSelection(unittest.TestCase):
+    """Which routes the probe is even allowed to consider.
+
+    A probe can only tell whether a route answers. It cannot tell whether the
+    route honoured a schema, because a route that ignores response_format
+    answers happily and returns markdown. So the filtering has to happen on
+    OpenRouter's published metadata before any call is made, and that filtering
+    is what these tests pin.
+    """
+
+    CATALOGUE = {"data": [
+        {"id": "good/chat:free", "supported_parameters": ["response_format", "tools"],
+         "pricing": {"prompt": "0"}, "architecture": {"output_modalities": ["text"]}},
+        {"id": "good/cheap", "supported_parameters": ["structured_outputs", "tools"],
+         "pricing": {"prompt": "0.00000001"}, "architecture": {"output_modalities": ["text"]}},
+        {"id": "good/dear", "supported_parameters": ["response_format", "tools"],
+         "pricing": {"prompt": "0.00001"}, "architecture": {"output_modalities": ["text"]}},
+        # The real failure: cohere/north-mini-code:free takes tools but has no
+        # response_format, so it answered a probe and then returned markdown.
+        {"id": "no/schema:free", "supported_parameters": ["tools", "temperature"],
+         "pricing": {"prompt": "0"}, "architecture": {"output_modalities": ["text"]}},
+        # A music model. Lists a schema parameter, costs nothing per prompt
+        # token, and would sort to the top of the paid band on price alone.
+        {"id": "music/lyria", "supported_parameters": ["response_format"],
+         "pricing": {"prompt": "0"}, "architecture": {"output_modalities": ["audio"]}},
+        # Auto-routers price at -1, meaning "varies by upstream".
+        {"id": "meta/auto", "supported_parameters": ["response_format", "tools"],
+         "pricing": {"prompt": "-1"}, "architecture": {"output_modalities": ["text"]}},
+    ]}
+
+    def catalogue(self):
+        payload = json.dumps(self.CATALOGUE).encode()
+
+        class Response(io.BytesIO):
+            def __enter__(self): return self
+            def __exit__(self, *_): return False
+
+        return lambda *a, **k: Response(payload)
+
+    def capable(self):
+        with mock.patch.object(openai_compat.urllib.request, "urlopen", self.catalogue()):
+            return openai_compat._capable_routes(
+                "sk-or-test", "openrouter", {"response_format", "structured_outputs"}
+            )
+
+    def test_a_route_without_response_format_is_never_offered(self) -> None:
+        self.assertNotIn("no/schema:free", self.capable())
+
+    def test_a_non_text_route_is_excluded_however_cheap(self) -> None:
+        self.assertNotIn("music/lyria", self.capable())
+
+    def test_a_varying_price_sorts_last_rather_than_first(self) -> None:
+        caps = self.capable()
+        self.assertEqual(float("inf"), caps["meta/auto"])
+
+    def test_free_is_tried_before_paid_and_paid_cheapest_first(self) -> None:
+        caps = self.capable()
+        free = lambda m: m.endswith(":free") or m == "openrouter/free"
+        order = sorted(caps, key=lambda m: (not free(m), caps[m], m.endswith("/free"), m))
+        self.assertEqual(["good/chat:free", "good/cheap", "good/dear", "meta/auto"], order)

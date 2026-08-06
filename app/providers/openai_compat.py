@@ -259,17 +259,18 @@ class OpenAICompatClient:
         return sorted({str(r.get("id", "")) for r in rows if r.get("id")})[:limit]
 
 
-def _routes_supporting(
+def _capable_routes(
     api_key: str, provider: str, wanted: set[str]
-) -> frozenset[str]:
-    """Route ids whose published parameter list includes any of ``wanted``.
+) -> dict[str, float]:
+    """``{route_id: prompt_cost_per_token}`` for routes supporting ``wanted``.
 
-    Empty when the manifest is unreachable, which callers read as "no filter"
-    rather than "nothing qualifies".
+    The cost rides along so callers can prefer the cheapest qualifying route
+    instead of whichever the list happens to name first. Empty when the manifest
+    is unreachable, which callers read as "no filter available".
     """
     url = MODEL_LISTS.get(provider)
     if not url:
-        return frozenset()
+        return {}
     req = urllib.request.Request(
         url, headers={"Authorization": f"Bearer {api_key}"}, method="GET"
     )
@@ -277,11 +278,33 @@ def _routes_supporting(
         with urllib.request.urlopen(req, timeout=20) as resp:
             rows = json.loads(resp.read().decode("utf-8", "replace")).get("data") or []
     except Exception:
-        return frozenset()
-    return frozenset(
-        str(r.get("id", "")) for r in rows
-        if wanted & set(r.get("supported_parameters") or ())
-    )
+        return {}
+
+    out: dict[str, float] = {}
+    for row in rows:
+        rid = str(row.get("id", ""))
+        params = set(row.get("supported_parameters") or ())
+        # "tools" is the cheapest reliable signal that this is a chat model at
+        # all. Without it the price sort surfaces things like
+        # google/lyria-3-clip-preview - a music generator that lists a schema
+        # parameter and costs nothing per prompt token, so it sorts to the top
+        # of the paid band and would be probed first.
+        if not rid or not (wanted & params) or "tools" not in params:
+            continue
+        # Text in, text out. A route that emits audio or images can satisfy
+        # every parameter check and still be useless here.
+        arch = row.get("architecture") or {}
+        modes = set(arch.get("output_modalities") or ["text"])
+        if modes and "text" not in modes:
+            continue
+        try:
+            price = float((row.get("pricing") or {}).get("prompt") or 0.0)
+        except (TypeError, ValueError):
+            price = 0.0
+        # Negative price is OpenRouter's "varies by upstream" sentinel, used by
+        # the auto-routers. Treat it as unknown-and-expensive rather than free.
+        out[rid] = float("inf") if price < 0 else price
+    return out
 
 
 def route_parameters(api_key: str, model: str, provider: str = "openrouter") -> frozenset[str]:
@@ -332,20 +355,24 @@ def find_working_route(
 
     Returns ``(winner, attempts)``; winner is "" when nothing worked.
     """
-    client = OpenAICompatClient(provider, api_key, "", retries=0)
     # Structured output is what the pipeline needs and what a probe cannot see:
     # a route without it answers the probe happily and then returns markdown at
     # the generate stage. Filter on the published parameter list first, so the
     # probe only ever chooses between routes that could actually do the work.
-    capable = _routes_supporting(api_key, provider, {"response_format", "structured_outputs"})
-    candidates = [
-        m for m in client.models()
-        if (not free_only or m.endswith(":free") or m == f"{provider}/free")
-        and (not capable or m in capable)
-    ]
-    # Deterministic single-upstream routes first; meta-routers last, because
-    # they may work once and fail the next call.
-    candidates.sort(key=lambda m: (m.endswith("/free"), m))
+    capable = _capable_routes(api_key, provider, {"response_format", "structured_outputs"})
+    if not capable:
+        client = OpenAICompatClient(provider, api_key, "", retries=0)
+        capable = {m: 0.0 for m in client.models()}
+
+    def free(model: str) -> bool:
+        return model.endswith(":free") or model == f"{provider}/free"
+
+    candidates = [m for m in capable if free(m) or not free_only]
+    # Free first because it costs nothing, then cheapest paid, so falling back
+    # to a paid route never quietly picks an expensive one. Meta-routers sort
+    # last within their band: they choose a different upstream per request, so
+    # one can pass this probe and fail the next call.
+    candidates.sort(key=lambda m: (not free(m), capable[m], m.endswith("/free"), m))
 
     attempts: list[tuple[str, str]] = []
     ping = [{
